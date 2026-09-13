@@ -15,7 +15,6 @@ function fmt(sec) {
   return m ? `${m}:${s.padStart(4, '0')}` : `${s}s`
 }
 </script>
-</script>
 
 <template>
   <div>

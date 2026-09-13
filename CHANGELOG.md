@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.1.4] - 2026-07-08
+
+### Fixed
+
+- 修复 VideoPlayer.vue 重复 `</script>` 标签导致 Vite 编译报错「Invalid end tag」
+
 ## [0.1.3] - 2026-07-08
 
 ### Added
