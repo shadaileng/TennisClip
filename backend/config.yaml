@@ -72,3 +72,13 @@ paths:
 
 logging:
   level: INFO
+
+# 跨域配置（前后端分开部署、不同源时使用）
+# allowed_origins: 允许访问本服务的来源列表；"*" 放行所有源（开发/内网演示用）。
+# 生产环境建议收紧为具体源，例如：
+#   cors:
+#     allowed_origins: ["https://tennisclip.example.com"]
+# 也可用环境变量 CORS_ALLOWED_ORIGINS（逗号分隔）覆盖，优先级更高。
+cors:
+  allowed_origins:
+    - "*"

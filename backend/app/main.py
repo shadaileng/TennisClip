@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -27,6 +28,18 @@ logger = get_logger(__name__)
 
 config = load_config()
 app = FastAPI(title="TennisClip AI", version="0.1.0")
+
+# CORS（前后端分开部署时放行跨域；同源部署下无副作用）
+# allowed_origins 来自 config.cors（config.yaml 的 cors.allowed_origins，
+# 或被环境变量 CORS_ALLOWED_ORIGINS 逗号分隔覆盖）。含 "*" 时 FastAPI 自动处理。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.cors.allowed_origins,
+    allow_credentials=False,  # 放行 * 时不能同时允许携带凭证
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 queue = TaskQueue(config)
 _upload_dir = config.path(config.paths.output_dir) / "uploads"
 _upload_dir.mkdir(parents=True, exist_ok=True)

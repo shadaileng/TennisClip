@@ -57,9 +57,19 @@ TennisClip/
 |---|------|------|
 | 后端 | Python 3.14 + FastAPI + SQLAlchemy | `uv` 管理依赖（`uv sync`） |
 | 前端 | Vue 3 + Vite + Pinia + Tailwind | `pnpm` 管理依赖 |
+| 部署 | Vite dev 代理（开发）/ nginx 反代（生产，可选） | 前后端可分开部署 |
 | 模型 | StepFun step3.7-flash（OpenAI 兼容） | 可切换 openai / ollama / vllm / mock |
 | 数据库 | SQLite（默认）/ PostgreSQL / MySQL | SQLAlchemy 多兼容层，ORM 自动建表 |
 | 视频 | FFMPEG（系统依赖） | 预处理统一 720p / 30fps |
+
+## 部署模式
+
+| 模式 | 前端 | 后端 | API 基础地址 | 说明 |
+|------|------|------|------|------|
+| 开发 | `pnpm dev`（5173） | `uv run uvicorn app.main:app`（8000） | 同源（Vite 代理） | Vite 把 `/api`、`/health` 代理到 8000 |
+| 生产（同源） | nginx 托管 `dist/` + 反代 `/api`、`/health` | FastAPI（8000） | 同源 | 单端口，无需 CORS |
+| 生产（跨域） | nginx/CDN 托管 `dist/`（独立域） | FastAPI（独立域） | `VITE_API_BASE_URL` | 构建时注入，后端 CORS 放行 |
+
 
 ## API 契约
 
@@ -92,6 +102,35 @@ TennisClip/
 - 与后端交互统一经 `lib/api.js`，组件内不直接写 fetch。
 - 样式使用 Tailwind；构建产物 `frontend/dist/`（.gitignore 忽略），单端口部署时由 FastAPI 托管。
 - dev 代理：`vite.config.js` 将 `/api`、`/health` 转发到 `127.0.0.1:8000`。
+- **API 基础地址**：`lib/api.js` 读取 `import.meta.env.VITE_API_BASE_URL`（构建时静态替换）。
+  - 开发环境不设置 → 走 Vite 代理，同源。
+  - 生产跨域部署：`VITE_API_BASE_URL=https://api.example.com pnpm build` 注入后端基地址。
+  - 生产同源（nginx 反代）：留空即可。
+
+## 部署与配置
+
+### 开发环境
+前端 `pnpm dev`（5173，Vite 代理到 8000）+ 后端 `uv run uvicorn app.main:app`（8000），同源，无需 CORS。
+
+### 生产环境（前后端分开部署）
+- **同源（推荐）**：nginx 托管 `frontend/dist/`，并将 `/api`、`/health` 反代到 FastAPI；前端无需 `VITE_API_BASE_URL`，后端无需 CORS。
+- **跨域**：前端 `VITE_API_BASE_URL=https://api.example.com pnpm build` 注入后端基地址；后端 CORS 放行该源。
+  - CORS 配置：`backend/config.yaml` 的 `cors.allowed_origins`（默认 `["*"]`），可被环境变量 `CORS_ALLOWED_ORIGINS`（逗号分隔）覆盖，优先级更高。
+  - 生产建议收紧为具体源列表，避免 `*`。
+
+### 环境变量（前端）
+`frontend/.env` / `frontend/.env.production`（gitignore 忽略，参考 `frontend/.env.example`）：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `VITE_API_BASE_URL` | 空（同源） | 生产跨域部署时注入后端基地址，构建时静态替换 |
+
+### 环境变量（后端，参考 `backend/.env.example`）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `CORS_ALLOWED_ORIGINS` | 未设（用 yaml 的 `*`） | 逗号分隔的允许源列表，覆盖 yaml |
+| `DATABASE_URL` | yaml 的 SQLite | 数据库连接串（多兼容） |
 
 ## 文档约定（docs-manage skill）
 

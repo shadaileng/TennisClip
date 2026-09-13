@@ -163,6 +163,44 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 `app/main.py` 检测到 `frontend/dist` 存在时，自动托管静态资源 + SPA fallback。
 
+### 4b. 生产环境前后端分开部署
+
+开发环境前端用 Vite dev server 代理后台；生产环境前后端分开部署，支持两种子模式：
+
+**同源（推荐）**：nginx 托管 `frontend/dist/`，并把 `/api`、`/health` 反代到 FastAPI：
+
+```nginx
+server {
+  listen 80;
+  server_name tennisclip.example.com;
+
+  root /var/www/tennisclip/dist;
+  index index.html;
+
+  location / {
+    try_files $uri $uri/ /index.html;   # SPA fallback
+  }
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+  location /health {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+```
+
+同源下前端无需 `VITE_API_BASE_URL`，后端无需 CORS。
+
+**跨域**：前端独立域托管 `dist/`，后端独立域。构建时注入后端基地址：
+
+```bash
+cd frontend
+VITE_API_BASE_URL=https://api.tennisclip.example.com pnpm build
+```
+
+后端 CORS 放行该源（`backend/config.yaml` 的 `cors.allowed_origins`，或环境变量 `CORS_ALLOWED_ORIGINS` 逗号分隔覆盖；默认 `*`，生产建议收紧为具体源）。
+
 ### 5. 命令行处理（可选）
 
 ```bash
@@ -197,6 +235,13 @@ uv run python -m app.cli --batch sample_videos
 | `highlight.target_duration` | `15` | 集锦目标时长（秒） |
 | `highlight.max_segments` | `3` | 集锦最多拼接的高光片段数 |
 | `queue.max_concurrent_tasks` | `2` | 批量任务并发上限（限流稳载） |
+| `cors.allowed_origins` | `["*"]` | 跨域允许源列表（前后端分开部署时用，可被 `CORS_ALLOWED_ORIGINS` 覆盖） |
+
+## 前端环境变量（frontend/.env）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `VITE_API_BASE_URL` | 空（同源） | 生产跨域部署时注入后端基地址（构建时静态替换）。开发环境走 Vite 代理，无需设置；生产同源（nginx 反代）留空 |
 
 ## 验收指标（对应需求文档 4.2）
 

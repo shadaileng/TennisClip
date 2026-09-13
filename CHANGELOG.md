@@ -4,6 +4,15 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.1.3] - 2026-07-08
+
+### Added
+
+- 部署模式：开发环境 Vite dev server 代理后台，生产环境前后端分开部署
+- 前端 API 客户端支持 `VITE_API_BASE_URL` 构建注入后端基地址（跨域部署）
+- 后端 FastAPI 新增可配置 CORS 中间件（`cors.allowed_origins`，默认 `*`，可被 `CORS_ALLOWED_ORIGINS` 覆盖）
+- 文档同步更新部署模式与前后端环境变量说明（README / AGENTS）
+
 ## [0.1.2] - 2026-07-08
 
 ### Added

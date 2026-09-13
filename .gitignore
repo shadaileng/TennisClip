@@ -15,6 +15,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.pnpm-store/
 
+# pnpm 虚拟 store（在仓库根目录，随 pnpm 配置变动）
+/.pnpm-store/
+
 # 通用
 __pycache__/
 *.pyc
@@ -22,6 +25,9 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 .DS_Store
+
+# pnpm 全局 store（在仓库根目录生成）
+/.pnpm-store/
 
 # docs-manage skill：参考代码目录不纳入版本管理
 docs/reference/

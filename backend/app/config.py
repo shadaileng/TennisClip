@@ -116,6 +116,18 @@ class PathsConfig:
 
 
 @dataclass
+class CorsConfig:
+    """跨域配置（前后端分开部署时使用）。
+
+    生产环境前后端不同源时，前端跨域请求需后端放行对应源。
+    allowed_origins 为允许的来源列表；"*" 表示放行所有源
+    （仅推荐开发 / 内网演示；生产应配置具体源列表）。
+    默认 "*" 保证开箱即用，生产通过 config.yaml / 环境变量 CORS_ALLOWED_ORIGINS 收紧。
+    """
+    allowed_origins: list = field(default_factory=lambda: ["*"])
+
+
+@dataclass
 class AppConfig:
     logging_level: str = "INFO"
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -125,6 +137,7 @@ class AppConfig:
     queue: QueueConfig = field(default_factory=QueueConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    cors: CorsConfig = field(default_factory=CorsConfig)
     root: Path = _PROJECT_ROOT
 
     @property
@@ -205,12 +218,18 @@ def load_config(config_file: Optional[str | Path] = None) -> AppConfig:
     fill(config.queue, data.get("queue"))
     fill(config.paths, data.get("paths"))
     fill(config.database, data.get("database"))
+    fill(config.cors, data.get("cors"))
 
     # P0/P1 覆盖：环境变量 DATABASE_URL 优先于 yaml 的 database.url
     # （.env 由 load_dotenv 注入 os.environ；容器/K8s/CI 直接设进程环境变量）
     db_url_env = os.environ.get("DATABASE_URL")
     if db_url_env:
         config.database.url = db_url_env
+
+    # P0/P1 覆盖：环境变量 CORS_ALLOWED_ORIGINS（逗号分隔）优先于 yaml 的 cors.allowed_origins
+    cors_env = os.environ.get("CORS_ALLOWED_ORIGINS")
+    if cors_env:
+        config.cors.allowed_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
 
     if data.get("logging", {}).get("level"):
         config.logging_level = data["logging"]["level"]
