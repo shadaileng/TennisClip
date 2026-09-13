@@ -14,9 +14,10 @@ PostgreSQL / MySQL（见各 driver 安装说明）。
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect as sa_inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,9 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _engines: dict[str, Engine] = {}
+
+# backend/ 根目录（db.py 位于 backend/app/db.py）
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _ensure_sqlite_dir(config: AppConfig, url: str) -> None:
@@ -63,11 +67,18 @@ def _short_url(url: str) -> str:
 
 
 def init_db(engine: Engine) -> None:
-    """建表（幂等）。导入 ORM 模型后调用 create_all。"""
+    """建表（幂等）：优先 Alembic 迁移，create_all 兜底。
+
+    - 库中已有 alembic_version 表 → 直接 alembic upgrade head 升到最新
+    - 库中没有 alembic_version（首次 / 旧库）→ 先 create_all 建表，再 stamp head
+    - 已有业务表（旧 create_all 产物）→ stamp head，避免重复建表
+    创建后初始化 model_providers 种子（若为空）。
+    """
     from app import db_models  # noqa: F401  确保模型注册
     from sqlalchemy.orm import sessionmaker
 
-    db_models.Base.metadata.create_all(engine)
+    _apply_migrations_or_create(engine)
+
     # 初始化 model_providers 种子（若为空）
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     with SessionLocal() as session:
@@ -75,6 +86,42 @@ def init_db(engine: Engine) -> None:
             session.add_all(db_models._seed_providers())
             session.commit()
             logger.info("db: seeded model providers")
+
+
+def _apply_migrations_or_create(engine: Engine) -> None:
+    """优先 Alembic 迁移；对无 alembic_version 的库做 create_all + stamp。"""
+    from app import db_models
+
+    inspector = sa_inspect(engine)
+    has_alembic = "alembic_version" in inspector.get_table_names()
+
+    if has_alembic:
+        # 已有迁移版本表：升级到 head（幂等，无新 revision 时为 no-op）
+        _run_alembic("upgrade")
+        logger.info("db: alembic upgrade head applied")
+    else:
+        # 首次或旧库（create_all 建的，无 alembic_version）：
+        # 幂等建表后把当前 head 版本 stamp 进去，后续 schema 演进走迁移
+        db_models.Base.metadata.create_all(engine)
+        _run_alembic("stamp")
+        logger.info("db: schema ensured via create_all, stamped to alembic head")
+
+
+def _run_alembic(action: str) -> None:
+    """在进程内执行 alembic upgrade/stamp head。
+
+    env.py 自行解析连接串（DATABASE_URL > config.yaml > 默认），
+    与运行时代码同源；SQLite 复用 get_engine 的 StaticPool 缓存。
+    """
+    from alembic.config import Config
+    from alembic import command as alembic_command
+
+    cfg = Config(str(_BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_BACKEND_ROOT / "alembic"))
+    if action == "upgrade":
+        alembic_command.upgrade(cfg, "head")
+    else:
+        alembic_command.stamp(cfg, "head")
 
 
 @contextmanager

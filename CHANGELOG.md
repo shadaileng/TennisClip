@@ -4,6 +4,18 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.1.5] - 2026-07-08
+
+### Added
+
+- 后端数据迁移改用 Alembic：`init_db` 服务启动时自动升级，旧库 `create_all` 兜底并 `stamp head`
+- 新增 `backend/alembic/` 迁移目录（`env.py` 动态读 `DATABASE_URL`/`config.yaml`）与初始迁移 revision（6 张表）
+- 文档同步更新 Alembic 迁移说明（README / AGENTS / `.env.example`）
+
+### Changed
+
+- `app/db.py` 与 `app/services/db_service.py` 的建表逻辑由裸 `create_all` 改为「Alembic 优先 + create_all 兜底」
+
 ## [0.1.4] - 2026-07-08
 
 ### Fixed

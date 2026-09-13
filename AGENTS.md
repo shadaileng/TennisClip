@@ -17,10 +17,12 @@ TennisClip/
 │   │   ├── models.py         # 数据模型 / 结构化结果定义
 │   │   ├── main.py           # FastAPI 服务入口 + 前端静态托管 + 数据库端点
 │   │   ├── core.py           # 全链路流水线（各节点同步落库）
-│   │   ├── db.py             # 数据库引擎/会话（SQLAlchemy 多兼容层）
-│   │   ├── db_models.py      # ORM 表结构
+│   │   ├── db.py             # 数据库引擎/会话（Alembic 迁移 + create_all 兜底）
+│   │   ├── db_models.py      # ORM 表结构（Alembic autogenerate 的目标元数据）
 │   │   ├── services/         # preprocess / highlight / video_editor / report / db_service
 │   │   └── utils/            # ffmpeg / llm / tasks / logger
+│   ├── alembic/              # 数据库迁移（env.py + versions/*.py，迁移脚本入库）
+│   ├── alembic.ini           # Alembic 配置（连接串由 env.py 动态解析，不写死）
 │   ├── prompts/              # 领域 Prompt 模板（网球教学知识库注入点）
 │   ├── tests/                # 单元测试
 │   ├── data/                 # SQLite 数据库文件（自动创建，.gitignore 忽略）
@@ -59,7 +61,7 @@ TennisClip/
 | 前端 | Vue 3 + Vite + Pinia + Tailwind | `pnpm` 管理依赖 |
 | 部署 | Vite dev 代理（开发）/ nginx 反代（生产，可选） | 前后端可分开部署 |
 | 模型 | StepFun step3.7-flash（OpenAI 兼容） | 可切换 openai / ollama / vllm / mock |
-| 数据库 | SQLite（默认）/ PostgreSQL / MySQL | SQLAlchemy 多兼容层，ORM 自动建表 |
+| 数据库 | SQLite（默认）/ PostgreSQL / MySQL | SQLAlchemy 多兼容层 + **Alembic 迁移**，ORM 自动建表 |
 | 视频 | FFMPEG（系统依赖） | 预处理统一 720p / 30fps |
 
 ## 部署模式
@@ -91,7 +93,12 @@ TennisClip/
 ### 后端（Python）
 - 依赖统一用 `uv`（`uv sync` / `uv run`），勿直接 `pip install` 进系统环境。
 - 配置读取走 `app/config.py`（`AppConfig`），providers 模式；勿在业务代码硬编码 API Key 或连接串。
-- 数据库操作经 `app/db.py`（引擎/会话）+ `app/db_models.py`（ORM）；表结构变更改 ORM 并由其幂等建表，勿手写 DDL。
+- 数据库操作经 `app/db.py`（引擎/会话）+ `app/db_models.py`（ORM）；表结构变更改 ORM 模型后，用 **Alembic** 生成迁移，勿手写 DDL。
+- **数据库迁移（Alembic）**：
+  - 服务启动时 `init_db` 自动处理：库已有 `alembic_version` 表则 `alembic upgrade head`；旧库（无该表）则 `create_all` 兜底 + `stamp head`。
+  - 手动操作：`cd backend`，`uv run alembic revision --autogenerate -m "变更说明"`（生成新迁移）→ `uv run alembic upgrade head`（应用）→ `uv run alembic downgrade -1`（回退）。
+  - 连接串与 ORM 元数据由 `alembic/env.py` 动态解析（`DATABASE_URL` > `config.yaml`），与运行时同源；勿在 `alembic.ini` 写死 URL。
+  - 新增表/列/索引：改 `app/db_models.py` 的 ORM → 跑 `alembic revision --autogenerate` → 审查生成的 `alembic/versions/*.py` 后 `upgrade head`。
 - 全链路逻辑集中在 `app/core.py`，各节点结果同步落库；新增节点保持该契约。
 - Prompt 模板集中在 `prompts/`（网球教学知识库注入点），勿散落在 service 内。
 - 视频处理依赖系统 FFMPEG，新增调用走 `app/utils/ffmpeg.py` 封装。

@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from app.config import AppConfig
+from app.db import _apply_migrations_or_create
 from app.db_models import (
     Base,
     FileRecord,
@@ -55,7 +56,9 @@ def init_db(config: AppConfig) -> None:
 
     _engine = create_engine(url, **kwargs)
     _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
-    Base.metadata.create_all(_engine)
+
+    # 优先 Alembic 迁移，create_all 兜底（对无 alembic_version 的库自动 stamp head）
+    _apply_migrations_or_create(_engine)
 
     # 导入 model_providers 种子（若表为空）
     with _SessionLocal() as session:

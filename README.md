@@ -130,7 +130,7 @@ database:
   url: "mysql+pymysql://tennisclip:tennisclip@127.0.0.1:3306/tennisclip"
 ```
 
-表结构（ORM 自动建表，幂等）：
+表结构（ORM 自动建表 + **Alembic 迁移**，幂等）：
 
 | 表 | 说明 |
 |---|---|
@@ -140,6 +140,24 @@ database:
 | `task_results` | 结果快照（高光 JSON、报告 JSON 全文） |
 | `model_providers` | 模型提供商配置（运行时可动态切换） |
 | `files` | 文件管理（处理涉及文件的状态跟踪） |
+
+### 数据库迁移（Alembic）
+
+表结构变更统一走 Alembic 迁移（`backend/alembic/`），服务启动时自动处理：
+
+- 库已有 `alembic_version` 表 → `alembic upgrade head` 升到最新
+- 旧库 / 首次（无该表）→ `create_all` 兜底建表 + `stamp head` 登记版本
+
+手动操作（`cd backend`）：
+
+```bash
+# 表结构变更：先改 ORM 模型，再生成迁移
+uv run alembic revision --autogenerate -m "变更说明"
+uv run alembic upgrade head        # 应用最新
+uv run alembic downgrade -1        # 回退一步
+```
+
+连接串与 ORM 元数据由 `backend/alembic/env.py` 动态解析（`DATABASE_URL` > `config.yaml`），与运行时代码同源，无需在 `alembic.ini` 写死 URL。
 
 ### 3. 启动前端（frontend/）
 
