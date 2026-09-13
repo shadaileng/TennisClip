@@ -53,7 +53,10 @@ TennisClip/                        # 总项目
 │   ├── architecture/  references/  guides/
 │   └── .vitepress/config.mts      # 侧边栏配置（新增文档必须同步）
 ├── .codebuddy/skills/docs-manage  # 文档管理 skill
+├── AGENTS.md                       # AI 编码代理上下文与约定
 ├── README.md
+├── CHANGELOG.md
+├── LICENSE                          # MIT 开源协议
 └── .gitignore
 ```
 
