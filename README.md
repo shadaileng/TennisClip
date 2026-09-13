@@ -208,6 +208,10 @@ uv run python -m app.cli --batch sample_videos
 对应 `base_url` 指向本地 OpenAI 兼容端点，`.env` 中填任意非空 Key 即可，
 视频与结果全程不出本地；`backend/outputs/` 目录即为交付物，不上传任何第三方。
 
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。完整许可文本见根目录 `LICENSE` 文件。
+
 ## 状态
 
 - 后端：各服务模块已定义接口与 Mock 实现，可直接跑通全链路（Mock 模式）
