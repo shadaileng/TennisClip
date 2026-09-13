@@ -1,0 +1,74 @@
+# TennisClip AI 运行配置
+# 敏感信息（API Key 等）放入 .env（参考 .env.example）
+# 依赖管理使用 uv：uv sync（见 pyproject.toml）
+
+# LLM 模型配置（providers 模式，OpenAI 兼容协议格式）
+# 每个 provider 统一三要素：base_url / api_key_env / model
+# 后期可替换为数据库动态查询（接口不变：AppConfig.active_provider）
+# api_key 不写在 yaml 里，通过 api_key_env 指定的环境变量从 .env 读取
+llm:
+  active_provider: default
+  temperature: 0.2                    # 低温度保证结构化输出稳定
+  max_tokens: 4096
+  timeout_seconds: 60
+  mock_mode: auto                     # auto | always | never
+  providers:
+    # 默认：阶跃星辰 Step 3.7 Flash（OpenAI 兼容端点）
+    - name: default
+      base_url: https://api.stepfun.com/v1
+      api_key_env: STEPFLASH_API_KEY
+      model: step3.7-flash
+    # OpenAI 官方
+    - name: openai
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+      model: gpt-4o-mini
+    # 本地 Ollama（OpenAI 兼容端点）
+    - name: ollama
+      base_url: http://127.0.0.1:11434/v1
+      api_key_env: OLLAMA_API_KEY
+      model: step3.7-flash
+    # 本地 vLLM（OpenAI 兼容端点）
+    - name: vllm
+      base_url: http://127.0.0.1:8000/v1
+      api_key_env: VLLM_API_KEY
+      model: step3.7-flash
+
+video:
+  resolution: 720p               # 预处理统一输出分辨率
+  fps: 30
+  bitrate: 2M
+  sample_rate: 30                # 送入模型的抽帧间隔（帧），降低 token 量
+  max_input_seconds: 300         # 单条视频最大时长（秒）
+
+highlight:
+  target_duration: 15           # 集锦目标时长（秒）
+  max_segments: 3               # 最多拼接的高光片段数
+  min_segment_seconds: 3        # 单个片段最短时长（秒）
+
+report:
+  levels: [beginner, intermediate, professional]   # 分析分层
+  language: zh
+
+queue:
+  max_concurrent_tasks: 2
+  task_timeout_seconds: 120
+
+# 数据库配置（多兼容：默认 SQLite 单文件，可切 PostgreSQL / MySQL）
+# 记录任务/输入/输出/结果快照/模型提供商配置/文件管理，支持审计与批量追溯
+#
+# 优先级（高→低）：进程环境变量 DATABASE_URL > .env > 本文件 url > 代码默认（SQLite）
+# 敏感连接串请放 .env（gitignore）或容器/CI 注入，勿提交到本文件：
+#   .env:  DATABASE_URL=postgresql+psycopg://user:pass@127.0.0.1:5432/tennisclip
+database:
+  # SQLite（默认，零配置，数据落 backend/data/tennisclip.db；被环境变量/.env 覆盖时此值仅作兜底）
+  url: "sqlite:///./data/tennisclip.db"
+  echo: false
+
+paths:
+  sample_dir: sample_videos
+  output_dir: outputs
+  data_dir: data
+
+logging:
+  level: INFO

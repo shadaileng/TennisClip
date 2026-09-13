@@ -1,0 +1,19 @@
+# 项目依赖声明已迁移至 pyproject.toml（使用 uv 管理：uv sync）
+# 本文件仅保留传统 pip 场景的等价清单，供无法使用 uv 的环境参考。
+python>=3.10
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+openai>=1.0
+PyYAML>=6.0
+python-dotenv>=1.0
+python-multipart>=0.0.9
+SQLAlchemy>=2.0
+
+# 多数据库驱动（按需，默认 SQLite 无需驱动）：
+# PostgreSQL:  psycopg[binary]>=3.1
+# MySQL:       pymysql>=1.1
+
+# 可选（开发/测试）：
+# pytest>=8.0
+# opencv-python>=4.9

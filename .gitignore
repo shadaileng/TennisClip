@@ -1,0 +1,27 @@
+# 后端（backend/）
+backend/.venv/
+backend/.uv-cache/
+backend/outputs/
+backend/data/*.db
+backend/test_roundtrip.db
+backend/*.db
+
+backend/sample_videos/*.mp4
+backend/sample_videos/*.mov
+backend/sample_videos/*.mkv
+
+# 前端（frontend/）
+frontend/node_modules/
+frontend/dist/
+frontend/.pnpm-store/
+
+# 通用
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+pytest-cache-files-*/
+.DS_Store
+
+# docs-manage skill：参考代码目录不纳入版本管理
+docs/reference/

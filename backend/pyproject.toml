@@ -1,0 +1,35 @@
+[project]
+name = "tennisclip"
+version = "0.1.0"
+description = "TennisClip AI — 网球视频高光集锦 + 动作技术分析工具（基于 Step 3.7 Flash）"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+    "openai>=1.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "opencv-python>=4.9",
+]
+# 多数据库驱动（按需安装）：
+# postgresql: "psycopg[binary]>=3.1"
+# mysql:      "pymysql>=1.1"
+
+[project.scripts]
+tennisclip = "app.cli:main"
+
+[tool.uv]
+# uv 配置文件另见 uv.toml（cache-dir 等）
+
+# 禁用 pytest 缓存插件：避免在工作区生成 pytest-cache-files-* 临时目录
+# （.pytest_cache 写入受限时 pytest 8.x 会降级为每次新建临时目录，此处彻底关闭）
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"

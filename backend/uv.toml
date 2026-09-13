@@ -1,0 +1,4 @@
+# uv 配置文件
+# 将 uv 缓存写入项目内目录，避免系统缓存目录权限问题
+# （用户目录 C:\Users\...\AppData\Local\uv\cache 拒绝访问）
+cache-dir = ".uv-cache"
