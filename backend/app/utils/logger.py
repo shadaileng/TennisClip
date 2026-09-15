@@ -79,7 +79,7 @@ def _intercept_stdlib_logging() -> None:
 def setup_logging(log_file: Path | None = None) -> None:
     """幂等初始化 loguru 双 sink 与标准 logging 拦截。
 
-    log_file 可选（默认 config.path("data") / "app.log"），测试可指向临时文件。
+    log_file 可选（默认 config.log_file_path，即 data_dir/app.log），测试可指向临时文件。
     """
     global _configured
     if _configured:
@@ -101,7 +101,7 @@ def setup_logging(log_file: Path | None = None) -> None:
 
     # 文件 sink（滚动 + 压缩，纯文本便于归档）
     if log_file is None:
-        log_file = load_config().path("data") / "app.log"
+        log_file = load_config().log_file_path
     try:
         Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         _loguru_logger.add(

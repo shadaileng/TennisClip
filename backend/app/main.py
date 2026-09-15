@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 queue = TaskQueue(config)
-_upload_dir = config.path(config.paths.output_dir) / "uploads"
+_upload_dir = config.output_path / "uploads"
 _upload_dir.mkdir(parents=True, exist_ok=True)
 
 # 初始化数据库（多兼容：SQLite/Postgres/MySQL，按 config.database.url）

@@ -110,6 +110,12 @@ class DatabaseConfig:
 
 @dataclass
 class PathsConfig:
+    """目录布局：输入/输出/日志/数据库统一归入 data_dir 之下。
+
+    sample_dir / output_dir 均相对 data_dir（默认 data/sample_videos、data/outputs）；
+    日志固定写入 data_dir/app.log，SQLite 落 data_dir/tennisclip.db。
+    """
+
     sample_dir: str = "sample_videos"
     output_dir: str = "outputs"
     data_dir: str = "data"
@@ -159,8 +165,28 @@ class AppConfig:
         """解析相对路径到项目根目录下的绝对路径。"""
         return self.root / name
 
+    @property
+    def data_path(self) -> Path:
+        """统一数据目录：输入/输出/日志/数据库均在此之下。"""
+        return self.root / self.paths.data_dir
+
+    @property
+    def sample_path(self) -> Path:
+        """示例输入视频目录（data_dir/sample_dir）。"""
+        return self.data_path / self.paths.sample_dir
+
+    @property
+    def output_path(self) -> Path:
+        """处理结果输出目录（data_dir/output_dir）。"""
+        return self.data_path / self.paths.output_dir
+
+    @property
+    def log_file_path(self) -> Path:
+        """日志文件路径（data_dir/app.log）。"""
+        return self.data_path / "app.log"
+
     def ensure_output_dir(self) -> Path:
-        out = self.path(self.paths.output_dir)
+        out = self.output_path
         out.mkdir(parents=True, exist_ok=True)
         return out
 

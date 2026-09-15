@@ -65,6 +65,8 @@ database:
   url: "sqlite:///./data/tennisclip.db"
   echo: false
 
+# 目录布局：输入/输出均相对 data_dir（默认 data/sample_videos、data/outputs）
+# 日志固定写入 data_dir/app.log，SQLite 落 data_dir/tennisclip.db
 paths:
   sample_dir: sample_videos
   output_dir: outputs

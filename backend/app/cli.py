@@ -2,7 +2,8 @@
 
 用法：
   python -m app.cli video.mp4 [--level beginner|intermediate|professional]
-  python -m app.cli --batch sample_videos
+  python -m app.cli --batch            # 默认处理 data 目录下的 sample_videos
+  python -m app.cli --batch data/sample_videos
 """
 
 from __future__ import annotations
@@ -54,7 +55,14 @@ def main() -> int:
         run_pipeline(video, config, result, level=args.level)
         results.append(result)
     else:
-        batch_dir = config.path(args.batch)
+        if args.batch:
+            batch_dir = Path(args.batch)
+            if not batch_dir.is_absolute() and not batch_dir.exists():
+                alt = config.data_path / args.batch
+                if alt.is_dir():
+                    batch_dir = alt
+        else:
+            batch_dir = config.sample_path
         if not batch_dir.is_dir():
             logger.error("批量目录不存在: {}", batch_dir)
             return 1

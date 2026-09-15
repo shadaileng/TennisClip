@@ -13,6 +13,10 @@
 - 日志级别来源：`TENNISCLIP_LOG_LEVEL` 环境变量 > `config.yaml` 的 `logging.level` > 默认 `INFO`
 - 新增 `backend/app/utils/logger.py`（基于 loguru），27 处调用点迁移至 `get_logger(__name__)` + `{}` 延迟求值占位符
 
+### Changed
+
+- 目录布局调整：输入（sample_videos）、输出（outputs）、日志（app.log）、数据库（tennisclip.db）统一归入 `backend/data/`（`data_dir`），`.gitignore` 简化为整体忽略 `backend/data/`
+
 ## [0.1.5] - 2026-07-08
 
 ### Added

@@ -38,7 +38,7 @@ def _ensure_sqlite_dir(config: AppConfig, url: str) -> None:
         # 形如 sqlite:///./data/tennisclip.db
         db_path = url.split("sqlite:////", 1)[-1] if "////" in url else url.split("sqlite:///", 1)[-1]
         if not db_path.startswith("/"):
-            target = config.path("data")
+            target = config.data_path
             target.mkdir(parents=True, exist_ok=True)
 
 

@@ -45,7 +45,7 @@ def init_db(config: AppConfig) -> None:
     if url.startswith("sqlite"):
         db_path = url.split("sqlite:///", 1)[-1]
         if not db_path.startswith("/") and not db_path.startswith("\\"):
-            target = config.path("data")
+            target = config.data_path
             target.mkdir(parents=True, exist_ok=True)
 
     kwargs: dict = {"echo": config.database.echo}

@@ -23,9 +23,11 @@ TennisClip/                        # 总项目
 │   │   └── utils/                # ffmpeg / llm / tasks / logger
 │   ├── prompts/                   # 领域 Prompt 模板（网球教学知识库注入点）
 │   ├── tests/                     # 单元测试
-│   ├── data/                      # SQLite 数据库文件（自动创建）
-│   ├── sample_videos/             # 示例输入视频目录
-│   ├── outputs/                   # 处理结果输出目录（自动创建）
+│   ├── data/                      # 统一数据目录（数据库/输入/输出/日志）
+│   │   ├── sample_videos/         # 示例输入视频目录
+│   │   ├── outputs/               # 处理结果输出目录（自动创建）
+│   │   ├── tennisclip.db          # SQLite 数据库（自动创建）
+│   │   └── app.log                # 滚动日志
 │   ├── config.yaml                # 运行配置（providers + 数据库 url）
 │   ├── pyproject.toml             # uv 依赖声明
 │   ├── uv.lock
@@ -223,9 +225,9 @@ VITE_API_BASE_URL=https://api.tennisclip.example.com pnpm build
 
 ```bash
 cd backend
-uv run python -m app.cli sample_videos/serve.mp4 --level intermediate
+uv run python -m app.cli data/sample_videos/serve.mp4 --level intermediate
 # 批量：
-uv run python -m app.cli --batch sample_videos
+uv run python -m app.cli --batch data/sample_videos
 ```
 
 ## 接口
@@ -279,7 +281,7 @@ uv run python -m app.cli --batch sample_videos
 
 本地私有化部署时，将 `config.yaml` 中 `llm.active_provider` 切到 `ollama` / `vllm`，
 对应 `base_url` 指向本地 OpenAI 兼容端点，`.env` 中填任意非空 Key 即可，
-视频与结果全程不出本地；`backend/outputs/` 目录即为交付物，不上传任何第三方。
+视频与结果全程不出本地；`backend/data/outputs/` 目录即为交付物，不上传任何第三方。
 
 ## 开源协议
 

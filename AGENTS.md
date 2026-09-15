@@ -25,9 +25,11 @@ TennisClip/
 │   ├── alembic.ini           # Alembic 配置（连接串由 env.py 动态解析，不写死）
 │   ├── prompts/              # 领域 Prompt 模板（网球教学知识库注入点）
 │   ├── tests/                # 单元测试
-│   ├── data/                 # SQLite 数据库文件（自动创建，.gitignore 忽略）
-│   ├── sample_videos/        # 示例输入视频目录（视频文件 .gitignore 忽略）
-│   ├── outputs/              # 处理结果输出目录（.gitignore 忽略）
+│   ├── data/                 # 统一数据目录（.gitignore 整体忽略）
+│   │   ├── sample_videos/    # 示例输入视频目录（视频文件 .gitignore 忽略）
+│   │   ├── outputs/          # 处理结果输出目录（集锦/报告，.gitignore 忽略）
+│   │   ├── tennisclip.db     # SQLite 数据库（.gitignore 忽略）
+│   │   └── app.log           # 滚动日志（.gitignore 忽略）
 │   ├── config.yaml           # 运行配置（providers + 数据库 url）
 │   ├── pyproject.toml        # uv 依赖声明
 │   └── uv.lock
@@ -177,7 +179,7 @@ cd backend
 uv sync                      # 安装依赖
 uv run uvicorn app.main:app  # 启动 API（8000）
 uv run pytest tests/         # 运行单元测试
-uv run python -m app.cli sample_videos/serve.mp4   # 命令行处理单视频
+uv run python -m app.cli data/sample_videos/serve.mp4   # 命令行处理单视频
 
 # 前端
 cd frontend
@@ -190,7 +192,7 @@ pnpm build                   # 产物 dist/，单端口部署由 FastAPI 托管
 
 ## 边界与注意事项
 
-- `.gitignore` 已忽略：`backend/.venv/`、`backend/outputs/`、`backend/data/*.db`、`backend/*.db`（含测试库 `test_roundtrip.db`）、视频文件、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`。
+- `.gitignore` 已忽略：`backend/.venv/`、`backend/data/`（数据库/输入/输出/日志整体忽略）、`backend/test_roundtrip.db`（根目录遗留测试库）、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`。
 - 提交时勿将生成数据库或视频文件加入版本控制。
 - 本仓库已采用 MIT 协议（`LICENSE`），修改协议或版权署名需谨慎并同步 README。
 - 验收指标：1–5 分钟视频端到端 ≤ 30s（不含模型推理网络延迟）；高光回合识别准确率 ≥ 90%（样本集离线评测）；连续 100 条批量无崩溃。

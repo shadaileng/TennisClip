@@ -1,15 +1,10 @@
 # 后端（backend/）
 backend/.venv/
 backend/.uv-cache/
-backend/outputs/
-backend/data/*.db
-backend/data/*.log
+# 统一数据目录：数据库/输入/输出/日志（整体忽略）
+backend/data/
+# 测试库（根目录遗留，单独忽略）
 backend/test_roundtrip.db
-backend/*.db
-
-backend/sample_videos/*.mp4
-backend/sample_videos/*.mov
-backend/sample_videos/*.mkv
 
 # 前端（frontend/）
 frontend/node_modules/
