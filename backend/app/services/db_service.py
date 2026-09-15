@@ -65,9 +65,9 @@ def init_db(config: AppConfig) -> None:
         if session.query(ModelProvider).count() == 0:
             session.add_all(_seed_providers())
             session.commit()
-            logger.info("db: seeded %d model providers", len(config.llm.providers))
+            logger.info("db: seeded {} model providers", len(config.llm.providers))
 
-    logger.info("db: initialized (%s)", _mask(url))
+    logger.info("db: initialized ({})", _mask(url))
     return None
 
 
@@ -95,7 +95,7 @@ def record_task_start(task_id: str, source_video: str, level: str) -> None:
             s.add(Task(task_id=task_id, status="pending", level=level, source_video=source_video))
             s.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: record_task_start failed: %s", exc)
+        logger.warning("db: record_task_start failed: {}", exc)
 
 
 def record_task_input(
@@ -126,7 +126,7 @@ def record_task_input(
             s.add(FileRecord(file_path=str(video_path), kind="input", task_id=task_id, size_mb=round(size_mb, 3)))
             s.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: record_task_input failed: %s", exc)
+        logger.warning("db: record_task_input failed: {}", exc)
 
 
 def record_task_finish(
@@ -156,7 +156,7 @@ def record_task_finish(
             )
             s.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: record_task_finish failed: %s", exc)
+        logger.warning("db: record_task_finish failed: {}", exc)
 
 
 def record_task_output(task_id: str, kind: str, file_path: str, size_mb: float, target_duration: Optional[int] = None) -> None:
@@ -174,7 +174,7 @@ def record_task_output(task_id: str, kind: str, file_path: str, size_mb: float, 
             s.add(FileRecord(file_path=file_path, kind=kind, task_id=task_id, size_mb=round(size_mb, 3)))
             s.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: record_task_output failed: %s", exc)
+        logger.warning("db: record_task_output failed: {}", exc)
 
 
 def mark_file_removed(file_path: str, task_id: Optional[str] = None) -> None:
@@ -192,7 +192,7 @@ def mark_file_removed(file_path: str, task_id: Optional[str] = None) -> None:
                 rec.removed_at = datetime.utcnow()
             s.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: mark_file_removed failed: %s", exc)
+        logger.warning("db: mark_file_removed failed: {}", exc)
 
 
 # ---------- 模型提供商（数据库动态切换） ----------
@@ -202,7 +202,7 @@ def list_providers() -> list[ModelProvider]:
         with session() as s:
             return s.query(ModelProvider).all()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: list_providers failed: %s", exc)
+        logger.warning("db: list_providers failed: {}", exc)
         return []
 
 
@@ -215,7 +215,7 @@ def activate_provider(name: str) -> bool:
             s.commit()
         return True
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: activate_provider failed: %s", exc)
+        logger.warning("db: activate_provider failed: {}", exc)
         return False
 
 
@@ -227,5 +227,5 @@ def get_task_history(limit: int = 50) -> list[Task]:
         with session() as s:
             return s.query(Task).order_by(Task.created_at.desc()).limit(limit).all()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: get_task_history failed: %s", exc)
+        logger.warning("db: get_task_history failed: {}", exc)
         return []

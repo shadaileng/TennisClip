@@ -26,7 +26,7 @@ def find_highlights(
 
     流程：构造领域 Prompt → 调用 LLM（自动 Mock 回退）→ 解析 JSON。
     """
-    logger.info("highlight: start for %s", video_path.name)
+    logger.info("highlight: start for {}", video_path.name)
     prompt = build_highlight_prompt(level=level, duration_seconds=duration_seconds)
 
     result = llm.complete_structured(
@@ -41,7 +41,7 @@ def find_highlights(
     highlight = HighlightResult(**result)
     highlight.target_duration = config.highlight.target_duration
     _clamp_segments(highlight, config, duration_seconds)
-    logger.info("highlight: %d segments", len(highlight.segments))
+    logger.info("highlight: {} segments", len(highlight.segments))
     return highlight
 
 

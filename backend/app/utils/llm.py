@@ -53,7 +53,7 @@ def _extract_json(text: str) -> Optional[dict]:
     try:
         return json.loads(text[start : end + 1])
     except json.JSONDecodeError:
-        logger.warning("JSON 解析失败，原文前 200 字: %s", text[:200])
+        logger.warning("JSON 解析失败，原文前 200 字: {}", text[:200])
         return None
 
 
@@ -87,7 +87,7 @@ def _video_to_image_frames(video_path: Path, max_frames: int = 12) -> list[str]:
                 frames.append(f"data:image/jpeg;base64,{b64}")
             return frames
     except Exception as exc:  # noqa: BLE001
-        logger.warning("视频抽帧失败，降级为纯文本: %s", exc)
+        logger.warning("视频抽帧失败，降级为纯文本: {}", exc)
         return []
 
 
@@ -99,7 +99,7 @@ def complete_structured(
 ) -> Optional[dict]:
     """按 OpenAI Chat Completions 格式发送 Prompt（含视频帧引用），返回解析后的结构化 dict。"""
     if _is_mock_mode(config):
-        logger.info("llm: mock mode (schema=%s)", schema_hint)
+        logger.info("llm: mock mode (schema={})", schema_hint)
         return _mock_structured(schema_hint, config, video_path)
 
     if OpenAI is None:
@@ -109,7 +109,7 @@ def complete_structured(
         )
 
     provider = config.active_provider
-    logger.info("llm: provider=%s model=%s", provider.name, provider.model)
+    logger.info("llm: provider={} model={}", provider.name, provider.model)
 
     # OpenAI 官方客户端格式（按 provider 三要素构造）
     client = OpenAI(

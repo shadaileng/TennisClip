@@ -102,7 +102,20 @@ TennisClip/
 - 全链路逻辑集中在 `app/core.py`，各节点结果同步落库；新增节点保持该契约。
 - Prompt 模板集中在 `prompts/`（网球教学知识库注入点），勿散落在 service 内。
 - 视频处理依赖系统 FFMPEG，新增调用走 `app/utils/ffmpeg.py` 封装。
-- 日志统一走 `app/utils/logger.py`，勿直接 `print`。
+- 日志统一走 `app/utils/logger.py`（基于 **loguru**），勿直接 `print`。
+  - **获取 logger**：`from app.utils.logger import get_logger; logger = get_logger(__name__)`，返回已绑定模块名的 loguru `Logger`，现有 12 处调用点无需改动。
+  - **统一格式规范**：`时间 | 级别 | 模块:函数:行号 - 消息`（时间毫秒精度 `YYYY-MM-DD HH:mm:ss.SSS`，级别按 `{level: <8}` 右补位）。
+    - 控制台 sink（stderr）带颜色标签；文件 sink（纯文本，无 ANSI 转义，便于 grep/归档）。
+  - **日志级别来源**：环境变量 `TENNISCLIP_LOG_LEVEL` > `config.yaml` 的 `logging.level`（经 `AppConfig.logging_level`）> 默认 `INFO`。
+  - **日志落盘**：`backend/data/app.log`，滚动 `rotation="10 MB"`、`retention="7 days"`、`compression="zip"`；已被 `.gitignore` 忽略，不入库。
+  - **uvicorn / FastAPI 日志**：经 `InterceptHandler` 统一接管，全链路同一套格式，无需额外配置。
+  - **带参调用规范（必须遵守）**：
+    - 用 loguru 延迟求值 `{}` 占位符，禁止 f-string / `%` / 字符串拼接（未达级别不格式化，省开销）：
+      `logger.info("开始处理视频 path={} task_id={}", video_path, task_id)`
+    - 结构化上下文用 `logger.bind(key=value)` 注入，可在格式中以 `{extra[key]}` 引用：
+      `logger.bind(task_id=task_id).error("处理失败：{}", exc)`
+  - **自动校验（检验标准）**：`backend/scripts/check_logging.py` 用 AST 静态扫描强制上述规范（禁止 `%` 风格 / f-string / 字符串拼接，要求 `{}` 占位符）；`uv run python backend/scripts/check_logging.py` 检出违规时退出码为 1。该检查已被 `tests/test_logging_convention.py` 纳入 `uv run pytest` 回归拦截，建议在 CI 中加入此脚本。
+  - **JSON 备选**：本项目为本地单机工具，默认纯文本；若后续接入日志聚合系统，可将文件 sink 改为 `serialize=True` 输出 JSON。
 
 ### 前端（Vue 3）
 - 组件放 `frontend/src/components/`，页面级状态走 Pinia store（`stores/`）。

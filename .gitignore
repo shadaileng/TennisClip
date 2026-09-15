@@ -3,6 +3,7 @@ backend/.venv/
 backend/.uv-cache/
 backend/outputs/
 backend/data/*.db
+backend/data/*.log
 backend/test_roundtrip.db
 backend/*.db
 

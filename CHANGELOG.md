@@ -4,6 +4,15 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.2.0] - 2026-09-15
+
+### Added
+
+- 后端接入 loguru 日志系统：统一 `时间 | 级别 | 模块:函数:行号 - 消息` 格式，控制台（彩色）+ 滚动文件（`data/app.log`，rotation=10MB / retention=7d / compression=zip）
+- 接管 uvicorn / FastAPI 标准 logging（InterceptHandler），全链路同一套日志格式
+- 日志级别来源：`TENNISCLIP_LOG_LEVEL` 环境变量 > `config.yaml` 的 `logging.level` > 默认 `INFO`
+- 新增 `backend/app/utils/logger.py`（基于 loguru），27 处调用点迁移至 `get_logger(__name__)` + `{}` 延迟求值占位符
+
 ## [0.1.5] - 2026-07-08
 
 ### Added

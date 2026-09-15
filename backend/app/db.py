@@ -58,7 +58,7 @@ def get_engine(config: AppConfig, use_pool: bool = True) -> Engine:
 
     engine = create_engine(url, **kwargs)
     _engines[url] = engine
-    logger.info("db: engine ready (%s)", _short_url(url))
+    logger.info("db: engine ready ({})", _short_url(url))
     return engine
 
 

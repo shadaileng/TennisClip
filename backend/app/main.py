@@ -18,12 +18,14 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import load_config
 from app.models import TaskResult, TaskStatus
-from app.utils.logger import get_logger
+from app.utils.logger import get_logger, setup_logging
 from app.utils.tasks import TaskQueue
 from app.core import run_pipeline
 from app.services import db_service
 from app.db_models import ModelProvider
 
+# 尽早接管日志（含 uvicorn 内置日志），保证启动期日志统一格式输出
+setup_logging()
 logger = get_logger(__name__)
 
 config = load_config()

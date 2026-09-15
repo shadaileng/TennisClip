@@ -16,7 +16,7 @@ from app.config import load_config
 from app.core import run_pipeline
 from app.models import TaskResult
 from app.utils import ffmpeg
-from app.utils.logger import get_logger
+from app.utils.logger import get_logger, setup_logging
 from app.utils.tasks import TaskQueue
 
 
@@ -35,6 +35,8 @@ def main() -> int:
     if not args.video and not args.batch:
         parser.error("需要指定视频文件或 --batch 目录")
 
+    # 接管日志（含第三方标准 logging），保证 CLI 全程统一格式输出
+    setup_logging()
     config = load_config()
     logger = get_logger("cli")
 
@@ -46,7 +48,7 @@ def main() -> int:
     if args.video:
         video = Path(args.video)
         if not video.exists():
-            logger.error("视频不存在: %s", video)
+            logger.error("视频不存在: {}", video)
             return 1
         result = TaskResult(task_id="cli-0001", source_video=str(video))
         run_pipeline(video, config, result, level=args.level)
@@ -54,12 +56,12 @@ def main() -> int:
     else:
         batch_dir = config.path(args.batch)
         if not batch_dir.is_dir():
-            logger.error("批量目录不存在: %s", batch_dir)
+            logger.error("批量目录不存在: {}", batch_dir)
             return 1
         queue = TaskQueue(config)
         videos = [p for p in sorted(batch_dir.iterdir()) if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".avi")]
         if not videos:
-            logger.error("目录中没有视频文件: %s", batch_dir)
+            logger.error("目录中没有视频文件: {}", batch_dir)
             return 1
 
         for video in videos:

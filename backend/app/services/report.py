@@ -21,7 +21,7 @@ def generate_report(
     level: str = "intermediate",
 ) -> TechnicalReport:
     """生成结构化技术分析报告；LLM 失败时使用模板兜底。"""
-    logger.info("report: start level=%s", level)
+    logger.info("report: start level={}", level)
     prompt = build_report_prompt(level=level, highlight=highlight)
 
     result = llm.complete_structured(
@@ -38,7 +38,7 @@ def generate_report(
 
     report_path = config.ensure_output_dir() / f"{video_path.stem}_report.json"
     report_path.write_text(json.dumps(report.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("report: saved to %s", report_path)
+    logger.info("report: saved to {}", report_path)
     report.generated_by = f"TennisClip AI / Step 3.7 Flash (level={level})"
     return report
 

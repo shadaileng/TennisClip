@@ -19,7 +19,7 @@ def is_available() -> bool:
     global _available
     if _available is None:
         _available = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
-        logger.info("ffmpeg available: %s", _available)
+        logger.info("ffmpeg available: {}", _available)
     return _available
 
 
@@ -27,7 +27,7 @@ def run(cmd: list[str], timeout: int = 300) -> str:
     """执行命令，失败时抛 RuntimeError。"""
     if not is_available():
         raise RuntimeError("FFMPEG 未安装或不在 PATH 中")
-    logger.debug("exec: %s", " ".join(cmd))
+    logger.debug("exec: {}", " ".join(cmd))
     proc = subprocess.run(
         cmd,
         capture_output=True,

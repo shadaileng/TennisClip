@@ -254,6 +254,13 @@ uv run python -m app.cli --batch sample_videos
 | `highlight.max_segments` | `3` | 集锦最多拼接的高光片段数 |
 | `queue.max_concurrent_tasks` | `2` | 批量任务并发上限（限流稳载） |
 | `cors.allowed_origins` | `["*"]` | 跨域允许源列表（前后端分开部署时用，可被 `CORS_ALLOWED_ORIGINS` 覆盖） |
+| `logging.level` | `INFO` | 日志级别（`DEBUG`/`INFO`/`WARNING`/`ERROR`），可被 `TENNISCLIP_LOG_LEVEL` 环境变量覆盖 |
+
+## 后端环境变量（backend/.env）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TENNISCLIP_LOG_LEVEL` | 未设（用 yaml 的 `INFO`） | 覆盖日志级别，优先级高于 `config.yaml` 的 `logging.level` |
 
 ## 前端环境变量（frontend/.env）
 

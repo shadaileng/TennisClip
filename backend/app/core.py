@@ -33,7 +33,7 @@ def run_pipeline(
     db_service.record_task_start(task_id, str(video_path), level)
 
     try:
-        logger.info("pipeline: start %s (level=%s)", video_path.name, level)
+        logger.info("pipeline: start {} (level={})", video_path.name, level)
 
         # 1. 预处理
         preprocessed = preprocess.preprocess(video_path, config)
@@ -85,7 +85,7 @@ def run_pipeline(
         result.status = "failed"
         result.error = str(exc)
         result.elapsed_seconds = time.monotonic() - started
-        logger.exception("pipeline failed: %s", exc)
+        logger.exception("pipeline failed: {}", exc)
 
     # 落库：任务终态 + 结果快照
     db_service.record_task_finish(

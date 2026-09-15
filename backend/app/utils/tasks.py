@@ -50,7 +50,7 @@ class TaskQueue:
                 result.status = TaskStatus.FAILED
                 result.error = str(exc)
                 result.elapsed_seconds = time.monotonic() - start
-                logger.exception("task %s failed", task_id)
+                logger.exception("task {} failed", task_id)
                 return result
 
         fut = self._executor.submit(_wrapped)
