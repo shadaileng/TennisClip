@@ -3,8 +3,12 @@ backend/.venv/
 backend/.uv-cache/
 # 统一数据目录：数据库/输入/输出/日志（整体忽略）
 backend/data/
+# 测试数据目录（隔离于 data/，不入库）
+backend/data_test/
 # 测试库（根目录遗留，单独忽略）
 backend/test_roundtrip.db
+# 测试环境配置（本地用，由 .env.test.example 复制，不入库）
+backend/.env.test
 
 # 前端（frontend/）
 frontend/node_modules/

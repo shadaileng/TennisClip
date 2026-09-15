@@ -116,19 +116,18 @@ def test_db_models_import():
 
 def test_db_service_roundtrip():
     """DB 服务层完整读写：任务/输入/输出/结果快照/提供商切换。"""
-    import os
-    import shutil
     from app.services import db_service
     from app.config import load_config
     from app.db_models import Task, TaskInput, TaskOutput, TaskResult as TRModel, ModelProvider, FileRecord
 
-    # 用 backend 下的临时 SQLite 文件（避免系统临时目录权限问题），测试后清理
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    test_db = os.path.join(backend_root, "test_roundtrip.db")
-    if os.path.exists(test_db):
-        os.remove(test_db)
-
+    # 测试库落入 data_test/（测试环境统一数据目录），测试后清理，不触碰真实 data/
     cfg = load_config()
+    data_dir = cfg.data_path
+    data_dir.mkdir(parents=True, exist_ok=True)
+    test_db = data_dir / "test_roundtrip.db"
+    if test_db.exists():
+        test_db.unlink()
+
     cfg.database.url = f"sqlite:///{test_db}"
 
     # 重新初始化引擎（指向临时库）
@@ -139,9 +138,9 @@ def test_db_service_roundtrip():
     task_id = "roundtrip01"
     db_service.record_task_start(task_id, "in.mp4", "intermediate")
     db_service.record_task_input(
-        task_id, Path(backend_root) / "in.mp4", 60.0, 1280, 720, 30.0, "intermediate"
+        task_id, data_dir / "in.mp4", 60.0, 1280, 720, 30.0, "intermediate"
     )
-    db_service.record_task_output(task_id, "report", test_db, 0.01)
+    db_service.record_task_output(task_id, "report", str(test_db), 0.01)
     db_service.record_task_finish(
         task_id, "succeeded", 12.3, None,
         highlight_json={"segments": []},
@@ -169,8 +168,8 @@ def test_db_service_roundtrip():
     try:
         import gc
         gc.collect()
-        if os.path.exists(test_db):
-            os.remove(test_db)
+        if test_db.exists():
+            test_db.unlink()
     except OSError:
         pass  # 文件仍被 SQLite 句柄占用，留待下次运行前清理
 
