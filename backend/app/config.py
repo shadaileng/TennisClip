@@ -190,6 +190,15 @@ class AppConfig:
         out.mkdir(parents=True, exist_ok=True)
         return out
 
+    def ensure_data_dir(self) -> Path:
+        """确保统一数据目录（data_test / data）存在，供数据库/输出前置创建。
+
+        SQLAlchemy 连接 SQLite 前父目录必须存在，测试环境（data_test）尤甚。
+        """
+        data = self.data_path
+        data.mkdir(parents=True, exist_ok=True)
+        return data
+
 
 def _build_provider_list(data: list[dict]) -> dict:
     """将 YAML 中的 providers 列表转为 name → ProviderConfig 字典。"""
@@ -205,13 +214,24 @@ def _build_provider_list(data: list[dict]) -> dict:
     return result
 
 
-def load_config(config_file: Optional[str | Path] = None) -> AppConfig:
-    """加载配置：环境变量 > .env > config.yaml > 代码默认值。
+def load_config(
+    config_file: Optional[str | Path] = None,
+    env_file: Optional[str] = None,
+) -> AppConfig:
+    """加载配置：环境变量 > .env(.test) > config.yaml > 代码默认值。
 
-    load_dotenv(override=False)：.env 只补充尚未设置的变量，
-    已存在的进程环境变量（P0，容器/K8s/CI 注入）优先于 .env（P1）。
+    env_file 缺省时按 TENNISCLIP_ENV 自动选择 dotenv 文件：
+      - "test" → backend/.env.test（测试环境，与开发/生产彻底隔离）
+      - 其他    → backend/.env（开发/生产默认）
+    保留显式指定 env_file 的能力（如 CI 注入特定环境文件）。
+
+    load_dotenv(override=False)：dotenv 只补充尚未设置的变量，
+    已存在的进程环境变量（P0，容器/K8s/CI 注入）优先于 .env（P1），安全边界不退化。
     """
-    load_dotenv(_PROJECT_ROOT / ".env", override=False)
+    if env_file is None:
+        env_name = os.environ.get("TENNISCLIP_ENV", "dev")
+        env_file = ".env.test" if env_name == "test" else ".env"
+    load_dotenv(_PROJECT_ROOT / env_file, override=False)
 
     cfg_path = Path(config_file) if config_file else _PROJECT_ROOT / "config.yaml"
     data: dict = {}
@@ -261,6 +281,10 @@ def load_config(config_file: Optional[str | Path] = None) -> AppConfig:
     data_dir_env = os.environ.get("TENNISCLIP_DATA_DIR")
     if data_dir_env:
         config.paths.data_dir = data_dir_env
+    # 测试环境兜底：未显式指定数据目录时，统一落入 data_test，不触碰真实 data/
+    # （.env.test 仍可通过 TENNISCLIP_DATA_DIR 覆盖；此兜底仅防止缺失时误写 data/）
+    elif os.environ.get("TENNISCLIP_ENV") == "test":
+        config.paths.data_dir = "data_test"
 
     if data.get("logging", {}).get("level"):
         config.logging_level = data["logging"]["level"]

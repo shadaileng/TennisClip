@@ -4,6 +4,16 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.4.0] - 2026-09-15
+
+### Added
+
+- 引入 `.env.test` 测试配置隔离：设置 `TENNISCLIP_ENV=test` 后 `load_config()` 自动加载 `backend/.env.test`，与开发/生产配置彻底隔离
+- 测试数据统一落入 `backend/data_test/`（由 `.env.test` 的 `TENNISCLIP_DATA_DIR=data_test` 驱动），绝不触碰真实 `backend/data/`
+- 新增 `backend/tests/conftest.py`：pytest 启动时设置 `TENNISCLIP_ENV=test` 并预建 `data_test/` 目录
+- 仅提交 `backend/.env.test.example` 模板，`.env.test` 不入库（`.gitignore` 忽略 `backend/.env.test` 与 `backend/data_test/`）
+- 新增文档 `docs/plans/03-测试环境隔离方案.md`
+
 ## [0.3.0] - 2026-09-15
 
 ### Added
