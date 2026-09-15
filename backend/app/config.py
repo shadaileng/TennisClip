@@ -257,6 +257,11 @@ def load_config(config_file: Optional[str | Path] = None) -> AppConfig:
     if cors_env:
         config.cors.allowed_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
 
+    # P0/P1 覆盖：环境变量 TENNISCLIP_DATA_DIR 优先于 yaml 的 paths.data_dir
+    data_dir_env = os.environ.get("TENNISCLIP_DATA_DIR")
+    if data_dir_env:
+        config.paths.data_dir = data_dir_env
+
     if data.get("logging", {}).get("level"):
         config.logging_level = data["logging"]["level"]
 

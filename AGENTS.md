@@ -153,6 +153,8 @@ TennisClip/
 |------|------|------|
 | `CORS_ALLOWED_ORIGINS` | 未设（用 yaml 的 `*`） | 逗号分隔的允许源列表，覆盖 yaml |
 | `DATABASE_URL` | yaml 的 SQLite | 数据库连接串（多兼容） |
+| `TENNISCLIP_DATA_DIR` | 未设（用 yaml 的 `data`） | 数据目录（输入/输出/日志/数据库），优先级高于 `config.yaml` 的 `paths.data_dir` |
+| `TENNISCLIP_LOG_LEVEL` | 未设（用 yaml 的 `INFO`） | 日志级别，优先级高于 `config.yaml` 的 `logging.level` |
 
 ## 文档约定（docs-manage skill）
 

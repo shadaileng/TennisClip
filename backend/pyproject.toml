@@ -1,6 +1,6 @@
 [project]
 name = "tennisclip"
-version = "0.2.0"
+version = "0.3.0"
 description = "TennisClip AI — 网球视频高光集锦 + 动作技术分析工具（基于 Step 3.7 Flash）"
 requires-python = ">=3.10"
 dependencies = [

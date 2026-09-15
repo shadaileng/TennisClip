@@ -263,6 +263,7 @@ uv run python -m app.cli --batch data/sample_videos
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `TENNISCLIP_LOG_LEVEL` | 未设（用 yaml 的 `INFO`） | 覆盖日志级别，优先级高于 `config.yaml` 的 `logging.level` |
+| `TENNISCLIP_DATA_DIR` | 未设（用 yaml 的 `data`） | 覆盖数据目录（输入/输出/日志/数据库），优先级高于 `config.yaml` 的 `paths.data_dir` |
 
 ## 前端环境变量（frontend/.env）
 
