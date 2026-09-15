@@ -264,6 +264,9 @@ uv run python -m app.cli --batch data/sample_videos
 |---|---|---|
 | `TENNISCLIP_LOG_LEVEL` | 未设（用 yaml 的 `INFO`） | 覆盖日志级别，优先级高于 `config.yaml` 的 `logging.level` |
 | `TENNISCLIP_DATA_DIR` | 未设（用 yaml 的 `data`） | 覆盖数据目录（输入/输出/日志/数据库），优先级高于 `config.yaml` 的 `paths.data_dir` |
+| `TENNISCLIP_ENV` | 未设（默认 `dev`） | 指定运行环境：`test` 时 `load_config()` 自动加载 `backend/.env.test`，与开发/生产配置隔离 |
+
+> **测试环境隔离**：复制 `backend/.env.test.example` 为 `backend/.env.test`（不入库），运行 `uv run pytest` 时由 `backend/tests/conftest.py` 自动设置 `TENNISCLIP_ENV=test`，所有 `load_config()` 自动走 `.env.test`，测试数据统一落入 `backend/data_test/`，绝不触碰真实 `backend/data/`。详见 `docs/plans/03-测试环境隔离方案.md`。
 
 ## 前端环境变量（frontend/.env）
 

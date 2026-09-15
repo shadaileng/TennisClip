@@ -19,6 +19,7 @@ export default defineConfig({
           items: [
             { text: '01：需求分析与落地方案', link: '/plans/01-需求分析与落地方案' },
             { text: '02：后端 loguru 日志 TDD 方案', link: '/plans/02-后端loguru日志TDD方案' },
+            { text: '03：测试环境隔离方案', link: '/plans/03-测试环境隔离方案' },
           ],
         },
       ],

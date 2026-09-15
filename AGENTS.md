@@ -30,6 +30,8 @@ TennisClip/
 │   │   ├── outputs/          # 处理结果输出目录（集锦/报告，.gitignore 忽略）
 │   │   ├── tennisclip.db     # SQLite 数据库（.gitignore 忽略）
 │   │   └── app.log           # 滚动日志（.gitignore 忽略）
+│   ├── data_test/            # 测试数据目录（.gitignore 忽略，由 .env.test 驱动，隔离于 data/）
+│   ├── .env.test.example     # 测试环境配置模板（入库）；.env.test 本地用不入库
 │   ├── config.yaml           # 运行配置（providers + 数据库 url）
 │   ├── pyproject.toml        # uv 依赖声明
 │   └── uv.lock
@@ -95,6 +97,7 @@ TennisClip/
 ### 后端（Python）
 - 依赖统一用 `uv`（`uv sync` / `uv run`），勿直接 `pip install` 进系统环境。
 - 配置读取走 `app/config.py`（`AppConfig`），providers 模式；勿在业务代码硬编码 API Key 或连接串。
+- 环境切换：`TENNISCLIP_ENV=test` 时 `load_config()` 自动加载 `backend/.env.test`（测试隔离），否则加载 `backend/.env`；保留 `env_file` 显式参数。测试数据统一落入 `backend/data_test/`，不触碰真实 `backend/data/`。
 - 数据库操作经 `app/db.py`（引擎/会话）+ `app/db_models.py`（ORM）；表结构变更改 ORM 模型后，用 **Alembic** 生成迁移，勿手写 DDL。
 - **数据库迁移（Alembic）**：
   - 服务启动时 `init_db` 自动处理：库已有 `alembic_version` 表则 `alembic upgrade head`；旧库（无该表）则 `create_all` 兜底 + `stamp head`。
@@ -154,6 +157,7 @@ TennisClip/
 | `CORS_ALLOWED_ORIGINS` | 未设（用 yaml 的 `*`） | 逗号分隔的允许源列表，覆盖 yaml |
 | `DATABASE_URL` | yaml 的 SQLite | 数据库连接串（多兼容） |
 | `TENNISCLIP_DATA_DIR` | 未设（用 yaml 的 `data`） | 数据目录（输入/输出/日志/数据库），优先级高于 `config.yaml` 的 `paths.data_dir` |
+| `TENNISCLIP_ENV` | 未设（默认 `dev`） | 运行环境：`test` 时 `load_config()` 自动加载 `backend/.env.test`，测试数据落入 `backend/data_test/`，与开发/生产隔离 |
 | `TENNISCLIP_LOG_LEVEL` | 未设（用 yaml 的 `INFO`） | 日志级别，优先级高于 `config.yaml` 的 `logging.level` |
 
 ## 文档约定（docs-manage skill）
@@ -194,7 +198,7 @@ pnpm build                   # 产物 dist/，单端口部署由 FastAPI 托管
 
 ## 边界与注意事项
 
-- `.gitignore` 已忽略：`backend/.venv/`、`backend/data/`（数据库/输入/输出/日志整体忽略）、`backend/test_roundtrip.db`（根目录遗留测试库）、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`。
+- `.gitignore` 已忽略：`backend/.venv/`、`backend/data/`（数据库/输入/输出/日志整体忽略）、`backend/data_test/`（测试数据目录，隔离于 data/）、`backend/.env.test`（测试配置，本地用不入库）、`backend/test_roundtrip.db`（根目录遗留测试库）、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`。
 - 提交时勿将生成数据库或视频文件加入版本控制。
 - 本仓库已采用 MIT 协议（`LICENSE`），修改协议或版权署名需谨慎并同步 README。
 - 验收指标：1–5 分钟视频端到端 ≤ 30s（不含模型推理网络延迟）；高光回合识别准确率 ≥ 90%（样本集离线评测）；连续 100 条批量无崩溃。
