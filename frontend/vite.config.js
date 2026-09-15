@@ -8,6 +8,9 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
+    host: true, // 监听 0.0.0.0，CloudStudio 等代理环境可访问
+    // CloudStudio 动态代理域名，允许任意主机头（仅开发环境）
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
