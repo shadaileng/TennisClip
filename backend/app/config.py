@@ -218,19 +218,23 @@ def load_config(
     config_file: Optional[str | Path] = None,
     env_file: Optional[str] = None,
 ) -> AppConfig:
-    """加载配置：环境变量 > .env(.test) > config.yaml > 代码默认值。
+    """加载配置：环境变量 > .env(.env.<env>) > config.yaml > 代码默认值。
 
-    env_file 缺省时按 TENNISCLIP_ENV 自动选择 dotenv 文件：
-      - "test" → backend/.env.test（测试环境，与开发/生产彻底隔离）
-      - 其他    → backend/.env（开发/生产默认）
+    env_file 缺省时按 TENNISCLIP_ENV 选择 dotenv 文件，遵循 .env.<env> 约定：
+      - TENNISCLIP_ENV=test → .env.test（测试环境，与开发/生产彻底隔离）
+      - TENNISCLIP_ENV=prod → .env.prod
+      - 缺省 / 其他          → .env
     保留显式指定 env_file 的能力（如 CI 注入特定环境文件）。
 
     load_dotenv(override=False)：dotenv 只补充尚未设置的变量，
     已存在的进程环境变量（P0，容器/K8s/CI 注入）优先于 .env（P1），安全边界不退化。
+
+    本函数为公共加载器，不感知任何具体环境（含 test）；测试隔离完全由
+    .env.test 的约束值与 conftest 的兜底注入提供，而非在此硬编码。
     """
     if env_file is None:
-        env_name = os.environ.get("TENNISCLIP_ENV", "dev")
-        env_file = ".env.test" if env_name == "test" else ".env"
+        env_name = os.environ.get("TENNISCLIP_ENV")
+        env_file = f".env.{env_name}" if env_name else ".env"
     load_dotenv(_PROJECT_ROOT / env_file, override=False)
 
     cfg_path = Path(config_file) if config_file else _PROJECT_ROOT / "config.yaml"
@@ -281,10 +285,8 @@ def load_config(
     data_dir_env = os.environ.get("TENNISCLIP_DATA_DIR")
     if data_dir_env:
         config.paths.data_dir = data_dir_env
-    # 测试环境兜底：未显式指定数据目录时，统一落入 data_test，不触碰真实 data/
-    # （.env.test 仍可通过 TENNISCLIP_DATA_DIR 覆盖；此兜底仅防止缺失时误写 data/）
-    elif os.environ.get("TENNISCLIP_ENV") == "test":
-        config.paths.data_dir = "data_test"
+    # 注：测试数据目录由 conftest 初始化时的兜底（TENNISCLIP_DATA_DIR=data_test）
+    # 与 .env.test 的约束值共同保证，经上述覆盖链生效；此处不再硬编码 data_test。
 
     if data.get("logging", {}).get("level"):
         config.logging_level = data["logging"]["level"]

@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.4.1] - 2026-09-16
+
+### Changed
+
+- 重构测试环境隔离：`load_config()` 不再硬编码测试分支与 `data_test` 兜底，改为通用 `.env.<env>` 约定（`TENNISCLIP_ENV=test` → `.env.test`）；测试数据目录兜底（未声明 `TENNISCLIP_DATA_DIR` 时默认 `data_test`）移至 `backend/tests/conftest.py` 初始化阶段，公共代码保持环境无关
+
 ## [0.4.0] - 2026-09-15
 
 ### Added
