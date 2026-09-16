@@ -81,7 +81,7 @@ TennisClip/
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 健康检查（返回当前 provider / model / database） |
+| GET | `/health` | 健康检查（返回当前 provider / model / base_url / api_key_set；`environment` 字段暴露启动四项自检明细：ffmpeg / database / provider / data_dir，status 为 ok/warn/fail；原顶层 `ffmpeg` / `database` 已并入 `environment`，不再单独返回） |
 | POST | `/api/v1/process` | 上传视频，异步提交处理任务，返回 `task_id` |
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |

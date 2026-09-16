@@ -49,6 +49,12 @@ _upload_dir.mkdir(parents=True, exist_ok=True)
 # 初始化数据库（多兼容：SQLite/Postgres/MySQL，按 config.database.url）
 db_service.init_db(config)
 
+# 启动环境自检（FFMPEG / 数据库 / 模型提供商 / 数据目录）
+# 任一检查不通过仅告警、不阻断启动；结果挂载到 app.state 供 /health 暴露
+from app.utils.environment import run_startup_checks
+
+app.state.environment_checks = run_startup_checks(config)
+
 # 前端静态资源（frontend/dist 存在时由 FastAPI 直接托管，单端口部署）
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent        # .../backend
 _FRONTEND_DIST = _BACKEND_ROOT.parent / "frontend" / "dist"  # .../TennisClip/frontend/dist
@@ -62,17 +68,17 @@ def _shutdown() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    from app.utils import ffmpeg
-
     provider = config.active_provider
     return {
         "status": "ok",
-        "ffmpeg": ffmpeg.is_available(),
         "provider": provider.name,
         "model": provider.model,
         "base_url": provider.base_url,
         "api_key_set": bool(config.api_key),
-        "database": config.database.url.split("@")[-1],
+        "environment": {
+            name: result.to_dict()
+            for name, result in app.state.environment_checks.items()
+        },
     }
 
 

@@ -4,6 +4,14 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.5.0] - 2026-09-16
+
+### Added
+
+- 启动环境自检：服务启动时对 FFMPEG 安装、数据库连接、模型提供商配置、数据目录可写做四项检查，失败仅告警、不阻断启动
+- `/health` 新增 `environment` 字段，返回启动自检明细（ffmpeg / database / provider / data_dir，status 为 ok/warn/fail）
+- 收口 `/health` 契约：原顶层 `ffmpeg` / `database` 字段已并入 `environment`（开发阶段不做向后兼容），保留 provider / model / base_url / api_key_set 配置身份字段
+
 ## [0.4.1] - 2026-09-16
 
 ### Changed
