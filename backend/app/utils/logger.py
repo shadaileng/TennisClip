@@ -66,12 +66,17 @@ class InterceptHandler(logging.Handler):
 
 def _intercept_stdlib_logging() -> None:
     """挂载 InterceptHandler 到 logging.root，并接管 uvicorn / FastAPI logger。"""
+    # 复位第三方库可能设置的全局禁用级别（如 logging.disable(WARNING)），
+    # 否则其会令 isEnabledFor 短路，使低级别日志（含 uvicorn access）被静默丢弃。
+    logging.disable(0)
     # 清空已注册的标准 handler，统一经 loguru 输出（force=True 覆盖既有配置）
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
     for name in _STDLIB_LOGGERS:
         lg = logging.getLogger(name)
         lg.handlers = []
         lg.propagate = True
+        lg.setLevel(0)  # NOTSET，避免被第三方抬高等级而丢弃低级别日志
+        lg.disabled = False  # 复位第三方可能设置的禁用标记（如 uvicorn 静默）
     # root 级别置 0，由 loguru 自行按 sink 级别过滤，避免标准层提前丢弃
     logging.getLogger().setLevel(0)
 

@@ -12,6 +12,7 @@ import pytest
 
 from app.utils import logger as logger_mod
 from app.utils.logger import (
+    InterceptHandler,
     get_logger,
     setup_logging,
     teardown_logging,
@@ -20,10 +21,34 @@ from app.utils.logger import (
 
 @pytest.fixture(autouse=True)
 def _reset_logging():
-    """每个用例前后重置 loguru 单例，保证 setup_logging 以干净状态重新配置。"""
+    """每个用例前后重置 loguru 单例与标准库 logging 全局状态，避免跨测试污染。
+
+    仅重置 loguru 不足以隔离：第三方库（经 app.main 导入链）可能调用
+    logging.disable(...) 抬高全局禁用级别，或直接设置 uvicorn.* logger 的
+    level/handlers/propagate，导致本用例的 isEnabledFor 被短路、拦截失效。
+    """
+
+    def _reset_stdlib() -> None:
+        # 复位全局禁用级别（logging.disable 的逆操作）
+        logging.disable(0)
+        # 复位被接管 logger 的 level / handlers / propagate / disabled，清掉第三方污染
+        for name in ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi"):
+            lg = logging.getLogger(name)
+            lg.setLevel(logging.NOTSET)
+            lg.handlers = []
+            lg.propagate = True
+            lg.disabled = False
+        # 清掉可能残留的 InterceptHandler，避免重复挂载
+        root = logging.getLogger()
+        root.handlers = [
+            h for h in root.handlers if not isinstance(h, InterceptHandler)
+        ]
+
+    _reset_stdlib()
     teardown_logging()
     yield
     teardown_logging()
+    _reset_stdlib()
 
 
 @pytest.fixture
