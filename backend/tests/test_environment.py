@@ -102,6 +102,7 @@ def _provider_config(api_key_env: str = "FOO", mock_mode: str = "auto") -> AppCo
 def test_check_provider_ok_with_key(monkeypatch):
     from app.utils.environment import check_provider
 
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = _provider_config()
     monkeypatch.setenv("FOO", "secret")
     assert check_provider(cfg).status == "ok"
@@ -110,6 +111,7 @@ def test_check_provider_ok_with_key(monkeypatch):
 def test_check_provider_warn_mock_auto(monkeypatch):
     from app.utils.environment import check_provider
 
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = _provider_config()
     monkeypatch.delenv("FOO", raising=False)
     result = check_provider(cfg)
@@ -120,6 +122,7 @@ def test_check_provider_warn_mock_auto(monkeypatch):
 def test_check_provider_fail_mock_never(monkeypatch):
     from app.utils.environment import check_provider
 
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = _provider_config(mock_mode="never")
     monkeypatch.delenv("FOO", raising=False)
     assert check_provider(cfg).status == "fail"
@@ -128,6 +131,7 @@ def test_check_provider_fail_mock_never(monkeypatch):
 def test_check_provider_fail_missing_field(monkeypatch):
     from app.utils.environment import check_provider
 
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = AppConfig()
     cfg.llm = LLMConfig(
         providers={"default": ProviderConfig(
@@ -142,9 +146,10 @@ def test_check_provider_fail_missing_field(monkeypatch):
     assert "缺失字段" in result.detail
 
 
-def test_check_provider_fail_unresolved():
+def test_check_provider_fail_unresolved(monkeypatch):
     from app.utils.environment import check_provider
 
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = AppConfig()  # providers 为空，active_provider 无法解析
     assert check_provider(cfg).status == "fail"
 
@@ -181,6 +186,7 @@ def test_check_data_dir_fail(monkeypatch, tmp_path):
 def test_run_startup_checks_structure(monkeypatch, tmp_path):
     monkeypatch.setattr("app.utils.ffmpeg.is_available", lambda: True)
     monkeypatch.setattr("app.db.get_engine", lambda config: _FakeEngine())
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
 
     cfg = _provider_config()
     monkeypatch.setenv("FOO", "secret")
@@ -192,3 +198,64 @@ def test_run_startup_checks_structure(monkeypatch, tmp_path):
     for result in checks.values():
         assert isinstance(result, CheckResult)
         assert result.status in {"ok", "warn", "fail"}
+
+
+def test_get_active_provider_from_db(tmp_path, monkeypatch):
+    """生效提供商应以数据库 is_active 记录为准，activate 后立即反映。
+
+    直接建表（不走 db_service.init_db 的 Alembic 路径，避免污染 stdlib 日志拦截），
+    仅验证 get_active_provider / activate_provider 的 is_active 读取逻辑。
+    """
+    import app.db_models  # noqa: F401  确保 ORM 注册
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.services import db_service
+
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    url = f"sqlite:///{tmp_path / 'data' / 'tennisclip.db'}"
+    engine = create_engine(url)
+    app.db_models.Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+    cfg = AppConfig()
+    cfg.llm = LLMConfig(
+        providers={
+            "default": ProviderConfig(name="default", base_url="http://x", api_key_env="FOO", model="m"),
+            "openai": ProviderConfig(name="openai", base_url="http://o", api_key_env="BAR", model="g"),
+        },
+        active_provider="default",
+    )
+    with SessionLocal() as s:
+        if s.query(app.db_models.ModelProvider).count() == 0:
+            s.add_all(app.db_models._seed_providers())
+            s.commit()
+
+    monkeypatch.setattr(db_service, "_engine", engine)
+    monkeypatch.setattr(db_service, "_SessionLocal", SessionLocal)
+
+    p = db_service.get_active_provider()
+    assert p is not None and p.name == "default" and p.is_active is True
+
+    assert db_service.activate_provider("openai") is True
+    p2 = db_service.get_active_provider()
+    assert p2.name == "openai" and p2.is_active is True
+
+
+def test_resolve_effective_provider_prefers_db(monkeypatch):
+    """_resolve_effective_provider 优先返回数据库生效记录。"""
+    from app.utils.environment import _resolve_effective_provider
+
+    class _FakeDB:
+        name = "db_active"
+        base_url = "http://db"
+        model = "db-model"
+        api_key_env = "FOO"
+
+    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: _FakeDB())
+    monkeypatch.setenv("FOO", "k")
+
+    eff = _resolve_effective_provider(AppConfig())
+    assert eff.name == "db_active"
+    assert eff.api_key == "k"
+    assert eff.source == "database"

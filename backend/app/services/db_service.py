@@ -219,6 +219,23 @@ def activate_provider(name: str) -> bool:
         return False
 
 
+def get_active_provider() -> Optional[ModelProvider]:
+    """返回当前生效（is_active=True）的提供商；无激活记录时取第一条；DB 故障时返回 None。
+
+    这是「运行时动态切换」的单一事实来源：/health、启动自检、LLM 调用均优先读此记录，
+    DB 不可用时由调用方回退静态 config.active_provider。
+    """
+    try:
+        with session() as s:
+            p = s.query(ModelProvider).filter_by(is_active=True).first()
+            if p is None:
+                p = s.query(ModelProvider).first()
+            return p
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: get_active_provider failed: {}", exc)
+        return None
+
+
 # ---------- 查询 ----------
 
 def get_task_history(limit: int = 50) -> list[Task]:

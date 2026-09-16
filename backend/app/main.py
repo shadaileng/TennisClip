@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from pathlib import Path
@@ -68,13 +69,36 @@ def _shutdown() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    provider = config.active_provider
+    """健康检查：provider 块反映数据库生效记录（is_active），DB 不可用时回退静态配置。"""
+    active = db_service.get_active_provider()
+    if active is not None:
+        provider = {
+            "name": active.name,
+            "model": active.model,
+            "base_url": active.base_url,
+            "api_key_set": bool(os.environ.get(active.api_key_env, "")),
+            "source": "database",
+        }
+    else:
+        try:
+            p = config.active_provider
+            provider = {
+                "name": p.name,
+                "model": p.model,
+                "base_url": p.base_url,
+                "api_key_set": bool(config.api_key),
+                "source": "config",
+            }
+        except ValueError as exc:
+            logger.warning("health: 无法解析静态 provider：{}", exc)
+            provider = {
+                "name": None, "model": None,
+                "base_url": None, "api_key_set": False, "source": "config",
+            }
+
     return {
         "status": "ok",
-        "provider": provider.name,
-        "model": provider.model,
-        "base_url": provider.base_url,
-        "api_key_set": bool(config.api_key),
+        "provider": provider,
         "environment": {
             name: result.to_dict()
             for name, result in app.state.environment_checks.items()

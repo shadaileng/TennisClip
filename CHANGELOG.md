@@ -10,7 +10,8 @@
 
 - 启动环境自检：服务启动时对 FFMPEG 安装、数据库连接、模型提供商配置、数据目录可写做四项检查，失败仅告警、不阻断启动
 - `/health` 新增 `environment` 字段，返回启动自检明细（ffmpeg / database / provider / data_dir，status 为 ok/warn/fail）
-- 收口 `/health` 契约：原顶层 `ffmpeg` / `database` 字段已并入 `environment`（开发阶段不做向后兼容），保留 provider / model / base_url / api_key_set 配置身份字段
+- 收口 `/health` 契约：原顶层 `ffmpeg` / `database` 字段已并入 `environment`（开发阶段不做向后兼容）；`provider` 改为嵌套对象 { name / model / base_url / api_key_set / source }，`source` 标识生效来源（`database` 或 `config`）
+- 生效提供商统一以数据库 `model_providers` 的 `is_active` 记录为准：运行时 LLM 调用、`/health`、启动自检均优先读 DB 生效记录（`db_service.get_active_provider()`），使 `/api/v1/db/providers/{name}/activate` 的切换真正生效；数据库不可用时回退静态 `config.active_provider`
 
 ## [0.4.1] - 2026-09-16
 

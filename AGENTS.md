@@ -81,7 +81,7 @@ TennisClip/
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 健康检查（返回当前 provider / model / base_url / api_key_set；`environment` 字段暴露启动四项自检明细：ffmpeg / database / provider / data_dir，status 为 ok/warn/fail；原顶层 `ffmpeg` / `database` 已并入 `environment`，不再单独返回） |
+| GET | `/health` | 健康检查（返回嵌套 `provider` 对象 { name / model / base_url / api_key_set / source }，`source` 标识生效来源 `database` 或 `config`；`environment` 字段暴露启动四项自检明细：ffmpeg / database / provider / data_dir，status 为 ok/warn/fail） |
 | POST | `/api/v1/process` | 上传视频，异步提交处理任务，返回 `task_id` |
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
@@ -91,6 +91,8 @@ TennisClip/
 | POST | `/api/v1/db/providers/{name}/activate` | 切换当前生效的模型提供商 |
 
 模型提供商以 OpenAI 兼容三要素（`base_url` / `api_key_env` / `model`）在 `backend/config.yaml` 的 `llm.providers` 声明，通过 `llm.active_provider` 切换；该结构已落地到数据库 `model_providers` 表，支持运行时动态切换。未配置 API Key 时 LLM 客户端自动回退 **Mock 模式**（`llm.mock_mode: auto`）。
+
+- 生效提供商的唯一事实来源为数据库 `model_providers` 的 `is_active` 记录：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均优先读取该记录；数据库不可用时回退静态 `config.active_provider`（`db_service.get_active_provider()` 统一封装，DB 故障返回 `None` 由调用方降级）。
 
 ## 编码约定
 

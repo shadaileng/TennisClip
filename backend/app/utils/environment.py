@@ -12,6 +12,7 @@ run_startup_checks(config) 在 FastAPI 启动阶段调用一次，聚合为结�
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
@@ -67,37 +68,79 @@ def check_database(config: "AppConfig") -> CheckResult:
         return CheckResult("database", "fail", f"连接失败（{_short_url(config.database.url)}）：{exc}")
 
 
-def check_provider(config: "AppConfig") -> CheckResult:
-    """校验 active_provider 可解析、关键字段非空，无 API Key 时确认可降级。"""
+class _EffProvider:
+    """生效提供商归一化对象（DB 记录或静态配置统一形态）。"""
+
+    __slots__ = ("name", "base_url", "model", "api_key", "source", "error")
+
+    def __init__(self, name="", base_url="", model="", api_key="", source="config", error=""):
+        self.name = name
+        self.base_url = base_url
+        self.model = model
+        self.api_key = api_key
+        self.source = source
+        self.error = error
+
+
+def _resolve_effective_provider(config: "AppConfig") -> _EffProvider:
+    """解析当前生效提供商：优先数据库 model_providers 的 is_active 记录（运行时动态切换），
+    DB 不可用或无记录时回退静态 config.active_provider。"""
+    from app.services import db_service
+
     try:
-        provider = config.active_provider
+        db_p = db_service.get_active_provider()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("提供商解析回退静态配置（DB 查询失败）：{}", exc)
+        db_p = None
+
+    if db_p is not None:
+        api_key = os.environ.get(db_p.api_key_env, "")
+        return _EffProvider(
+            name=db_p.name, base_url=db_p.base_url, model=db_p.model,
+            api_key=api_key, source="database",
+        )
+
+    try:
+        p = config.active_provider
     except ValueError as exc:
-        return CheckResult("provider", "fail", str(exc))
+        return _EffProvider(error=str(exc))
+    return _EffProvider(
+        name=p.name, base_url=p.base_url, model=p.model,
+        api_key=config.api_key, source="config",
+    )
+
+
+def check_provider(config: "AppConfig") -> CheckResult:
+    """校验当前生效提供商可解析、关键字段非空，无 API Key 时确认可降级。
+
+    生效来源：优先数据库 model_providers 的 is_active 记录（运行时动态切换），
+    回退静态 config.active_provider。
+    """
+    eff = _resolve_effective_provider(config)
+    if eff.error:
+        return CheckResult("provider", "fail", eff.error)
 
     missing = [
         field
-        for field, value in (("base_url", provider.base_url), ("model", provider.model))
+        for field, value in (("base_url", eff.base_url), ("model", eff.model))
         if not value
     ]
     if missing:
-        return CheckResult(
-            "provider", "fail",
-            f"提供商 {provider.name} 缺失字段：{', '.join(missing)}",
-        )
+        return CheckResult("provider", "fail", f"提供商 {eff.name} 缺失字段：{', '.join(missing)}")
 
-    if config.api_key:
-        return CheckResult("provider", "ok", f"提供商 {provider.name} 已配置 API Key")
+    if eff.api_key:
+        return CheckResult("provider", "ok", f"提供商 {eff.name} 已配置 API Key（来源 {eff.source}）")
 
     # 无 API Key：依赖 mock 模式降级
     mock_mode = str(config.llm.mock_mode).lower()
     if mock_mode == "auto":
         return CheckResult(
             "provider", "warn",
-            f"提供商 {provider.name} 未配置 API Key，将回退 Mock 模式（mock_mode=auto）",
+            f"提供商 {eff.name} 未配置 API Key，将回退 Mock 模式（mock_mode=auto，来源 {eff.source}）",
         )
     return CheckResult(
         "provider", "fail",
-        f"提供商 {provider.name} 未配置 API Key 且 mock_mode={config.llm.mock_mode}，无法运行",
+        f"提供商 {eff.name} 未配置 API Key 且 mock_mode={config.llm.mock_mode}，无法运行",
     )
 
 

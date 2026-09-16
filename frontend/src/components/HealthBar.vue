@@ -17,7 +17,7 @@ const props = defineProps({
       class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-emerald-300"
     >
       <span class="h-2 w-2 rounded-full bg-emerald-400" />
-      在线 · {{ health.provider }} / {{ health.model }}
+      在线 · {{ health.provider.name }} / {{ health.provider.model }}
     </span>
     <span
       v-else

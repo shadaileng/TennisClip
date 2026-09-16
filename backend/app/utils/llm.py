@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 from pathlib import Path
-from typing import Optional
+from types import SimpleNamespace
+from typing import Optional, Tuple
 
 try:
     from openai import OpenAI
@@ -31,13 +33,39 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _is_mock_mode(config: AppConfig) -> bool:
+def _is_mock_mode(config: AppConfig, api_key: Optional[str] = None) -> bool:
+    if api_key is None:
+        api_key = config.api_key
     mode = (config.llm.mock_mode or "auto").lower()
     if mode == "always":
         return True
     if mode == "never":
         return False
-    return not config.api_key
+    return not api_key
+
+
+def _resolve_provider(config: AppConfig) -> Tuple[object, str]:
+    """解析当前生效提供商（优先数据库 is_active 记录，回退静态配置）。
+
+    返回 (provider, api_key)：provider 具 name / base_url / model 属性。
+    使 /api/v1/db/providers/{name}/activate 的切换在推理时真正生效。
+    """
+    from app.services import db_service
+
+    try:
+        db_p = db_service.get_active_provider()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llm: 提供商解析回退静态配置（DB 查询失败）：{}", exc)
+        db_p = None
+
+    if db_p is not None:
+        api_key = os.environ.get(db_p.api_key_env, "")
+        provider = SimpleNamespace(name=db_p.name, base_url=db_p.base_url, model=db_p.model)
+        logger.debug("llm: 使用数据库生效提供商 {}", db_p.name)
+        return provider, api_key
+
+    provider = config.active_provider
+    return provider, config.api_key
 
 
 def _extract_json(text: str) -> Optional[dict]:
@@ -98,7 +126,8 @@ def complete_structured(
     schema_hint: str = "HighlightResult",
 ) -> Optional[dict]:
     """按 OpenAI Chat Completions 格式发送 Prompt（含视频帧引用），返回解析后的结构化 dict。"""
-    if _is_mock_mode(config):
+    provider, api_key = _resolve_provider(config)
+    if _is_mock_mode(config, api_key):
         logger.info("llm: mock mode (schema={})", schema_hint)
         return _mock_structured(schema_hint, config, video_path)
 
@@ -108,13 +137,12 @@ def complete_structured(
             "uv sync 安装依赖或改用 mock 模式"
         )
 
-    provider = config.active_provider
     logger.info("llm: provider={} model={}", provider.name, provider.model)
 
     # OpenAI 官方客户端格式（按 provider 三要素构造）
     client = OpenAI(
         base_url=provider.base_url,
-        api_key=config.api_key,
+        api_key=api_key,
         timeout=config.llm.timeout_seconds,
     )
 
