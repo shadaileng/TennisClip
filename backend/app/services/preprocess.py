@@ -43,7 +43,10 @@ def preprocess(video_path: Path, config: AppConfig, work_dir: Optional[Path] = N
         "ffmpeg", "-y",
         "-i", str(video_path),
         "-t", str(config.video.max_input_seconds),
-        "-vf", f"scale=iw*if(gt(iw,0),-2):-2:flags=lanczos,fps={config.video.fps},unsharp=3:3:0.6",
+        # 统一缩放到 720p（高度 720，宽度按比例且为偶数），fps 统一，轻量锐化去模糊。
+        # 注意：scale 表达式内不能含逗号（逗号会被 ffmpeg 当作滤镜分隔符），
+        # 因此用固定 720p 目标，而非带 if() 的复杂表达式。
+        "-vf", f"scale=-2:720:flags=lanczos,fps={config.video.fps},unsharp=3:3:0.6",
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-c:a", "aac", "-b:a", "128k",
         str(target),

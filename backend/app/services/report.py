@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from app.config import AppConfig
 from app.models import HighlightResult, StrokeAnalysis, TechnicalReport
@@ -19,8 +20,13 @@ def generate_report(
     highlight: HighlightResult,
     config: AppConfig,
     level: str = "intermediate",
+    out_path: Optional[Path] = None,
 ) -> TechnicalReport:
-    """生成结构化技术分析报告；LLM 失败时使用模板兜底。"""
+    """生成结构化技术分析报告；LLM 失败时使用模板兜底。
+
+    out_path 指定落盘路径（由调用方 core.run_pipeline 决定文件名，
+    保证与 TaskResult.report_path 记录一致）；缺省时按 video_path.stem 生成。
+    """
     logger.info("report: start level={}", level)
     prompt = build_report_prompt(level=level, highlight=highlight)
 
@@ -36,8 +42,11 @@ def generate_report(
     else:
         report = _fallback_report(highlight, level)
 
-    report_path = config.ensure_output_dir() / f"{video_path.stem}_report.json"
-    report_path.write_text(json.dumps(report.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path = out_path or (config.ensure_output_dir() / f"{video_path.stem}_report.json")
+    report_path = Path(report_path)
+    report_path.write_text(
+        json.dumps(report.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     logger.info("report: saved to {}", report_path)
     report.generated_by = f"TennisClip AI / Step 3.7 Flash (level={level})"
     return report

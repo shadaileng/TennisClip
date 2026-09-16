@@ -29,29 +29,36 @@ class TaskQueue:
         self._tasks: dict[str, TaskResult] = {}
         self._task_order: list[str] = []
 
-    def submit(self, job: Callable[[], TaskResult]) -> str:
-        task_id = uuid.uuid4().hex[:12]
+    def submit(self, job: Callable[[], TaskResult], task_id: Optional[str] = None) -> str:
+        if task_id is None:
+            task_id = uuid.uuid4().hex[:12]
         self._tasks[task_id] = TaskResult(task_id=task_id, status=TaskStatus.PENDING)
 
-        def _wrapped() -> TaskResult:
+        def _wrapped() -> None:
             result = self._tasks[task_id]
             result.status = TaskStatus.PROCESSING
             start = time.monotonic()
             try:
                 out = job()
-                result.status = TaskStatus.SUCCEEDED
-                result.elapsed_seconds = time.monotonic() - start
-                return out
+                elapsed = time.monotonic() - start
+                # 用 job 返回的真实结果（含 failed/error）替换存储对象，
+                # 不再无条件覆盖为 succeeded，保证异常原因能传回前端。
+                if isinstance(out, TaskResult):
+                    out.task_id = task_id
+                    out.elapsed_seconds = elapsed
+                    self._tasks[task_id] = out
+                else:
+                    result.status = TaskStatus.SUCCEEDED
+                    result.elapsed_seconds = elapsed
             except TimeoutError:
                 result.status = TaskStatus.TIMEOUT
                 result.error = "task timeout"
-                return result
+                result.elapsed_seconds = time.monotonic() - start
             except Exception as exc:  # noqa: BLE001
                 result.status = TaskStatus.FAILED
                 result.error = str(exc)
                 result.elapsed_seconds = time.monotonic() - start
                 logger.exception("task {} failed", task_id)
-                return result
 
         fut = self._executor.submit(_wrapped)
         fut.add_done_callback(lambda f: None)

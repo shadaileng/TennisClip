@@ -50,7 +50,7 @@ def edit_highlight_video(
     ordered = sorted(highlight.segments, key=lambda s: -s.confidence)
     ordered += [s for s in ordered]  # 不足时允许重复补齐
     idx = 0
-    for i in range(remaining * 3):
+    for i in range(int(remaining * 3)):
         if remaining <= 0 or idx >= len(ordered):
             break
         seg = ordered[idx]

@@ -160,11 +160,8 @@ class FileRecord(Base):
         return f"<FileRecord {self.kind} {self.file_path}>"
 
 
-def _seed_providers() -> list[ModelProvider]:
-    """从 config.yaml 的 providers 列表导入种子（若表为空）。"""
-    from app.config import load_config
-
-    config = load_config()
+def _seed_providers(config: "AppConfig") -> list[ModelProvider]:
+    """从传入 config 的 providers 列表导入种子（若表为空）。"""
     providers = []
     for name, p in config.llm.providers.items():
         providers.append(

@@ -127,19 +127,27 @@ async def process_video(file: UploadFile, level: str = "intermediate") -> dict:
     # 落库：上传文件记录
     db_service.record_task_output(task_id, "uploaded", str(dest), len(data) / (1024 * 1024))
 
-    queue.submit(lambda: _process_one(dest, task_id, level))
+    queue.submit(lambda: _process_one(dest, task_id, level), task_id=task_id)
     return {"task_id": task_id, "status": TaskStatus.PENDING.value}
+
+
+def _get_result(task_id: str) -> TaskResult:
+    """从任务队列取结果；任务不存在（如 id 拼写错误或已过期）返回 404 而非 500。"""
+    try:
+        return queue.get(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found")
 
 
 @app.get("/api/v1/tasks/{task_id}")
 def get_task(task_id: str) -> dict:
-    result = queue.get(task_id)  # KeyError → 404
+    result = _get_result(task_id)
     return result.model_dump()
 
 
 @app.get("/api/v1/tasks/{task_id}/report")
 def get_report(task_id: str) -> FileResponse:
-    result = queue.get(task_id)
+    result = _get_result(task_id)
     if not result.report_path:
         raise HTTPException(404, "report not ready")
     return FileResponse(result.report_path, filename=result.report_path.split("/")[-1])
@@ -147,7 +155,7 @@ def get_report(task_id: str) -> FileResponse:
 
 @app.get("/api/v1/tasks/{task_id}/video")
 def get_video(task_id: str) -> FileResponse:
-    result = queue.get(task_id)
+    result = _get_result(task_id)
     if not result.highlight_video_path:
         raise HTTPException(404, "video not ready")
     return FileResponse(result.highlight_video_path, filename=result.highlight_video_path.split("/")[-1])

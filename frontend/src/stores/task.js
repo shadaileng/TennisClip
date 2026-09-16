@@ -11,6 +11,7 @@ export const useTaskStore = defineStore('task', {
     loading: false,
     error: null,
     _timer: null,
+    _failCount: 0,   // 连续轮询失败（5xx）计数
   }),
 
   getters: {
@@ -41,6 +42,7 @@ export const useTaskStore = defineStore('task', {
     async submit(file, level = 'intermediate') {
       this.error = null
       this.loading = true
+      this._failCount = 0
       try {
         const res = await api.upload(file, level)
         this.current = {
@@ -80,15 +82,28 @@ export const useTaskStore = defineStore('task', {
       if (!this.current) return
       try {
         const data = await api.getTask(this.current.task_id)
+        this._failCount = 0
         this.current = data
         if (TERMINAL_STATES.includes(data.status)) {
           this._stopPolling()
           this.loading = false
+          // 失败/超时时把后端 error 原因透出到界面
+          if (data.status !== 'succeeded' && data.error) {
+            this.error = data.error
+          }
         }
       } catch (e) {
-        // 轮询失败不断开，等待下次
+        // 任务不存在：停止轮询并提示
         if (e.status === 404) {
           this.error = '任务不存在或已过期'
+          this._stopPolling()
+          this.loading = false
+          return
+        }
+        // 其余错误（如 5xx）累计，超过阈值后停止轮询，避免无限刷屏
+        this._failCount += 1
+        if (this._failCount >= 5) {
+          this.error = '任务状态查询连续失败，请稍后重试或检查后端日志'
           this._stopPolling()
           this.loading = false
         }

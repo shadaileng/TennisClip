@@ -228,7 +228,7 @@ def test_get_active_provider_from_db(tmp_path, monkeypatch):
     )
     with SessionLocal() as s:
         if s.query(app.db_models.ModelProvider).count() == 0:
-            s.add_all(app.db_models._seed_providers())
+            s.add_all(app.db_models._seed_providers(cfg))
             s.commit()
 
     monkeypatch.setattr(db_service, "_engine", engine)

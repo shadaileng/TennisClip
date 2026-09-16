@@ -83,7 +83,9 @@ def init_db(engine: Engine) -> None:
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     with SessionLocal() as session:
         if not session.query(db_models.ModelProvider).count():
-            session.add_all(db_models._seed_providers())
+            from app.config import load_config
+
+            session.add_all(db_models._seed_providers(load_config()))
             session.commit()
             logger.info("db: seeded model providers")
 

@@ -63,7 +63,7 @@ def init_db(config: AppConfig) -> None:
     # 导入 model_providers 种子（若表为空）
     with _SessionLocal() as session:
         if session.query(ModelProvider).count() == 0:
-            session.add_all(_seed_providers())
+            session.add_all(_seed_providers(config))
             session.commit()
             logger.info("db: seeded {} model providers", len(config.llm.providers))
 

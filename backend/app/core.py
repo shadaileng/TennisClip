@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from app.config import AppConfig
-from app.models import TaskResult
+from app.models import TaskResult, TaskStatus
 from app.services import db_service
 from app.services import highlight as highlight_service
 from app.services import preprocess, report, video_editor
@@ -67,8 +67,10 @@ def run_pipeline(
         )
 
         # 4. 技术分析报告
-        result.report = report.generate_report(preprocessed, hl, config, level=level)
         report_file = config.ensure_output_dir() / f"{video_path.stem}_report.json"
+        result.report = report.generate_report(
+            preprocessed, hl, config, level=level, out_path=report_file
+        )
         result.report_path = str(report_file)
 
         # 落库：输出 - 报告文件
@@ -78,11 +80,11 @@ def run_pipeline(
                 report_file.stat().st_size / (1024 * 1024),
             )
 
-        result.status = "succeeded"
+        result.status = TaskStatus.SUCCEEDED
         result.elapsed_seconds = time.monotonic() - started
         logger.info("pipeline: done in %.1fs", result.elapsed_seconds)
     except Exception as exc:  # noqa: BLE001
-        result.status = "failed"
+        result.status = TaskStatus.FAILED
         result.error = str(exc)
         result.elapsed_seconds = time.monotonic() - started
         logger.exception("pipeline failed: {}", exc)
