@@ -93,6 +93,7 @@ TennisClip/
 模型提供商以 OpenAI 兼容三要素（`base_url` / `api_key_env` / `model`）在 `backend/config.yaml` 的 `llm.providers` 声明，通过 `llm.active_provider` 切换；该结构已落地到数据库 `model_providers` 表，支持运行时动态切换。未配置 API Key 时 LLM 客户端自动回退 **Mock 模式**（`llm.mock_mode: auto`）。
 
 - 生效提供商的唯一事实来源为数据库 `model_providers` 的 `is_active` 记录：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均优先读取该记录；数据库不可用时回退静态 `config.active_provider`（`db_service.get_active_provider()` 统一封装，DB 故障返回 `None` 由调用方降级）。
+- 启动环境自检（`app/utils/environment.py` 的 `run_startup_checks`）在 FastAPI 启动时执行一次，结果存入 `app.state.environment_checks` 并映射到 `/health` 的 `environment` 字段；任一项不通过仅 `logger.warning`、不阻断启动。`environment` 含四项：`ffmpeg`（探测 ffmpeg/ffprobe，ok/fail）、`database`（按 `config.database.url` 建连并执行 `SELECT 1` ping，ok/fail）、`provider`（优先 DB `is_active` 记录，关键字段缺失/无法解析判 fail，无 API Key 且 `mock_mode=auto` 判 warn、否则 fail）、`data_dir`（目录可创建且可写，ok/fail）。各 `detail` 不回显凭据：数据库连接串 `@` 前部分（用户名/密码）已剥离，API Key 仅以布尔 `api_key_set` 暴露。
 
 ## 编码约定
 

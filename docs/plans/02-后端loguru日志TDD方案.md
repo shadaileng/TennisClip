@@ -5,9 +5,9 @@
 > | 项目 | 内容 |
 > |------|------|
 > | 文档编号 | 02 |
-> | 文档版本 | v1.0.0 |
+> | 文档版本 | v1.0.2 |
 > | 文档状态 | 🏁 已完成 |
-> | 最后更新 | 2026-09-15 |
+> | 最后更新 | 2026-09-16 |
 > | 对应功能/内容 | 后端由标准 logging 替换为 loguru：双 sink（控制台 + 滚动文件）、统一拦截 uvicorn/FastAPI 日志、config.yaml + 环境变量控制级别、统一格式与带参调用规范 |
 >
 > **变更历史**
@@ -16,6 +16,7 @@
 > |------|:----:|------|
 > | 2026-09-15 | v1.0.0 | 初版（TDD 模式方案） |
 > | 2026-09-15 | v1.0.1 | 实施完成：TC-01~TC-06 全绿，27 处 %s 日志调用迁移为 {} 占位符，接入 uvicorn 拦截 |
+> | 2026-09-16 | v1.0.2 | 修复 TC-04 跨测试污染：InterceptHandler 接管时复位被接管 logger 的 `disabled`/`level` 与全局 `logging.disable`；测试夹具 `_reset_logging` 新增 `_reset_stdlib` 重置标准库全局状态，避免第三方导入（uvicorn 等）静默禁用导致拦截失效 |
 >
 > **关联文档**：[01-需求分析与落地方案](./01-需求分析与落地方案.md)、[AGENTS.md](../AGENTS.md)
 
@@ -77,7 +78,38 @@ import logging
 from pathlib import Path
 import pytest
 from app.utils import logger as logger_mod
-from app.utils.logger import get_logger, setup_logging
+from app.utils.logger import InterceptHandler, get_logger, setup_logging, teardown_logging
+
+_STDLIB_LOGGERS = ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi")
+
+
+@pytest.fixture(autouse=True)
+def _reset_logging():
+    """每个用例前后重置 loguru 单例与标准库 logging 全局状态，避免跨测试污染。
+
+    uvicorn 等第三方在导入期可能把 logger.disabled 置 True 或调用
+    logging.disable(...)，导致 isEnabledFor 短路、InterceptHandler 收不到日志。
+    """
+
+    def _reset_stdlib() -> None:
+        logging.disable(0)  # 复位全局禁用级别
+        for name in _STDLIB_LOGGERS:
+            lg = logging.getLogger(name)
+            lg.setLevel(logging.NOTSET)
+            lg.handlers = []
+            lg.propagate = True
+            lg.disabled = False  # 复位第三方可能设置的禁用标记
+        root = logging.getLogger()
+        root.handlers = [
+            h for h in root.handlers if not isinstance(h, InterceptHandler)
+        ]
+
+    _reset_stdlib()
+    teardown_logging()  # 移除已注册 sink + 复位 _configured
+    yield
+    teardown_logging()
+    _reset_stdlib()
+
 
 @pytest.fixture
 def tmp_log_file(tmp_path):
@@ -85,7 +117,7 @@ def tmp_log_file(tmp_path):
     # 重建 loguru 单例 handler，指向临时文件，避免污染 data/app.log
     setup_logging(log_file=log_file)
     yield log_file
-    logger_mod.teardown_logging()  # 实现需提供清理，移除已注册 sink
+    # teardown 由 autouse _reset_logging 统一处理
 ```
 
 ## 四、实现步骤（Green：使上述测试通过）
@@ -117,6 +149,7 @@ def tmp_log_file(tmp_path):
 | loguru 进程级单例导致测试间 handler 累积 | 测试污染、重复日志 | `setup_logging` 幂等 + `teardown_logging` 清理；测试用 `tmp_path` |
 | `InterceptHandler` 栈深度（`depth`）设置不当 | 日志显示 loguru 内部帧 | `emit` 用 `logger.opt(depth=6, exception=record.exc_info).log(...)` |
 | 文件 sink 在容器/无写入权限时失败 | 服务启动报错 | `setup_logging` 对文件 sink 失败做降级（仅控制台），不影响主流程 |
+| 第三方库（uvicorn 等）在导入期把被接管 logger 的 `disabled` 置 `True` 或调用 `logging.disable(...)` | 标准 logging 被静默禁用，`isEnabledFor` 短路，`InterceptHandler` 收不到日志（TC-04 在完整套件下偶发失败） | `_intercept_stdlib_logging` 接管时复位 `logging.disable(0)` 及每个被接管 logger 的 `level=NOTSET`/`disabled=False`；测试夹具 `_reset_stdlib` 在每个用例前后重置标准库全局状态 |
 | 滚动/压缩参数拼写错误被静默忽略 | 日志无限增长 | TC-05 显式断言 sink 参数，CI 校验 |
 
 ## 七、关联文档

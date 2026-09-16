@@ -4,6 +4,19 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.6.0] - 2026-09-16
+
+### Added
+
+- 任务异步化重构：上传文件后立即创建任务并返回 `task_id`；任务交由后台 `TaskQueue` 线程池异步执行管线（预处理 → 高光识别 → 剪辑合成 → 技术分析报告），逐阶段落库
+- 前端按 `task_id` 轮询任务状态；任务异常（如 FFMPEG 不可用）即终止并回填 `error` 字段，前端展示具体错误而非持续 500 轮询
+
+## [0.5.1] - 2026-09-16
+
+### Fixed
+
+- 修复日志端到端测试（TC-04）在完整测试套件下偶发失败：第三方库（uvicorn 等）在导入期可能将 `uvicorn.access` 等 logger 的 `disabled` 置为 `True` 或调用 `logging.disable(...)`，导致标准 logging 被静默禁用、`InterceptHandler` 收不到日志。`app/utils/logger.py` 的 `_intercept_stdlib_logging` 接管时复位 `logging.disable(0)` 及被接管 logger 的 `level`/`disabled`；`tests/test_logging.py` 的 `_reset_logging` 夹具新增 `_reset_stdlib`，在每个用例前后重置标准库 logging 全局状态，实现真正隔离
+
 ## [0.5.0] - 2026-09-16
 
 ### Added
@@ -12,6 +25,10 @@
 - `/health` 新增 `environment` 字段，返回启动自检明细（ffmpeg / database / provider / data_dir，status 为 ok/warn/fail）
 - 收口 `/health` 契约：原顶层 `ffmpeg` / `database` 字段已并入 `environment`（开发阶段不做向后兼容）；`provider` 改为嵌套对象 { name / model / base_url / api_key_set / source }，`source` 标识生效来源（`database` 或 `config`）
 - 生效提供商统一以数据库 `model_providers` 的 `is_active` 记录为准：运行时 LLM 调用、`/health`、启动自检均优先读 DB 生效记录（`db_service.get_active_provider()`），使 `/api/v1/db/providers/{name}/activate` 的切换真正生效；数据库不可用时回退静态 `config.active_provider`
+
+### Changed
+
+- 模型提供商种子写入改用 `init_db` 已持有的 `config`：去掉 `db_models._seed_providers` 内部重复的 `load_config()`，避免多重配置来源下 `is_active` 判定以磁盘 `config.yaml` 为准而漂移；`db.py` 的 `init_db(engine)` 路径仍就地 `load_config()` 后传入
 
 ## [0.4.1] - 2026-09-16
 

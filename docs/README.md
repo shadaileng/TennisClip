@@ -15,6 +15,7 @@ docs/
 │   ├── 02-后端loguru日志TDD方案.md
 │   └── 03-测试环境隔离方案.md
 ├── architecture/             # 架构类（持续维护）
+│   └── index.md              # 架构总览（含任务处理流程）
 ├── references/               # 参考类（随代码更新）
 ├── guides/                   # 指南/手册类（持续维护）
 └── reference/                # 参考代码（.gitignore，不入库）
@@ -27,6 +28,7 @@ docs/
 | 01 | [需求分析与落地方案](plans/01-需求分析与落地方案.md) | v1.0.0 | 方案 | plans/ | 🚧 进行中 | 完整需求分析、技术选型、全链路、风险管控、验收标准、迭代规划 |
 | 02 | [后端 loguru 日志 TDD 方案](plans/02-后端loguru日志TDD方案.md) | v1.0.0 | 方案 | plans/ | 📋 待执行 | 后端接入 loguru：双 sink、统一格式、uvicorn 拦截、TDD 测试用例 |
 | 03 | [测试环境隔离方案](plans/03-测试环境隔离方案.md) | v1.0.0 | 方案 | plans/ | 📋 待执行 | 引入 `.env.test` 与 `data_test` 隔离测试配置/数据，仅提交 `.env.test.example` |
+| 00 | [架构总览（任务处理流程）](architecture/index.md) | v1.0.0 | 架构 | architecture/ | 🚧 进行中 | 上传→创建任务→后台异步→轮询→异常终态的错误传播机制 |
 
 ## 文档类型说明
 
