@@ -50,6 +50,7 @@ TennisClip/
 │   ├── .vitepress/config.mts # 侧边栏配置（新增文档必须同步）
 │   ├── plans/  architecture/  references/  guides/
 ├── .codebuddy/skills/        # 项目 skills（docs-manage / git-commit）
+├── package.json              # 根项目配置：VitePress 文档站（pnpm 管理依赖，docs/ 为内容根）
 ├── AGENTS.md                 # 本文件
 ├── README.md
 ├── CHANGELOG.md
@@ -67,6 +68,7 @@ TennisClip/
 | 模型 | StepFun step3.7-flash（OpenAI 兼容） | 可切换 openai / ollama / vllm / mock |
 | 数据库 | SQLite（默认）/ PostgreSQL / MySQL | SQLAlchemy 多兼容层 + **Alembic 迁移**，ORM 自动建表 |
 | 视频 | FFMPEG（系统依赖） | 预处理统一 720p / 30fps |
+| 文档站 | VitePress（Vue 驱动静态站） | 根目录 `pnpm` 管理，`docs/` 为内容根，配置 `docs/.vitepress/config.mts` |
 
 ## 部署模式
 
@@ -195,6 +197,12 @@ cd frontend
 pnpm install
 pnpm dev                     # http://127.0.0.1:5173（代理到 8000）
 pnpm build                   # 产物 dist/，单端口部署由 FastAPI 托管
+
+# 文档站（根目录，VitePress；docs/ 为内容根）
+pnpm install                 # 根目录安装 vitepress 等依赖
+pnpm run docs:dev            # http://127.0.0.1:5173 本地预览文档（与前端 dev 同端口，按需错开）
+pnpm run docs:build          # 产物 docs/.vitepress/dist/（.gitignore 忽略）
+pnpm run docs:preview        # 预览构建产物
 ```
 
 需系统安装 [FFMPEG](https://ffmpeg.org/)（Windows：`winget install Gyan.FFmpeg`）。

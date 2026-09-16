@@ -127,7 +127,7 @@ FFMPEG 不可用 → video_editor 抛 RuntimeError
 
 - 管线在 `app/core.py` 的 `run_pipeline` 内以 `try/except` 兜底：任意节点异常（如剪辑节点 FFMPEG 不可用抛 `RuntimeError`）均被捕获，置 `result.status = "failed"`、`result.error = str(exc)`。
 - `_process_one` 返回该 `TaskResult`，`_wrapped` 将其替换为队列存储结果，错误原因随 `GET /tasks/{id}` 的 `error` 字段返回前端。
-- 前端 `TaskCard.vue` 在 `failed` / `timeout` 时渲染 `处理失败：{{ task.error }}`。
+- 前端 `TaskCard.vue` 在 `failed` / `timeout` 时渲染 `处理失败：&#123;&#123; task.error &#125;&#125;`。
 
 ## 四、API 契约（任务相关）
 

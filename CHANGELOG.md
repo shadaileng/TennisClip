@@ -8,6 +8,7 @@
 
 ### Added
 
+- 根目录搭建 VitePress 文档站：新增根 `package.json` 与 `vite.config.js`，文档内容根指向 `docs/`；`docs:dev`/`docs:build`/`docs:preview` 脚本可用；`docs/.vitepress/config.mts` 配置 `host`/`allowedHosts` 与 `ignoreDeadLinks`，新增 `references/`、`guides/` 分区首页
 - 任务异步化重构：上传文件后立即创建任务并返回 `task_id`；任务交由后台 `TaskQueue` 线程池异步执行管线（预处理 → 高光识别 → 剪辑合成 → 技术分析报告），逐阶段落库
 - 前端按 `task_id` 轮询任务状态；任务异常（如 FFMPEG 不可用）即终止并回填 `error` 字段，前端展示具体错误而非持续 500 轮询
 

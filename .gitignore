@@ -28,6 +28,12 @@ pytest-cache-files-*/
 
 # pnpm 全局 store（在仓库根目录生成）
 /.pnpm-store/
+# 根目录依赖（VitePress 等）
+/node_modules/
+
+# 文档站构建产物（VitePress）
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
 # docs-manage skill：参考代码目录不纳入版本管理
 docs/reference/
