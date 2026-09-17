@@ -1,11 +1,14 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useTaskStore } from '../stores/task'
 
 const emit = defineEmits(['submit'])
 const props = defineProps({
   loading: Boolean,
   hasTask: Boolean,
 })
+
+const store = useTaskStore()
 
 const level = ref('intermediate')
 const file = ref(null)
@@ -17,6 +20,22 @@ const LEVELS = [
   { value: 'intermediate', label: '进阶' },
   { value: 'professional', label: '专业' },
 ]
+
+// 服务商下拉：自定义（独立配置） + 各启用服务商
+const providerOptions = computed(() => store.providerOptions)
+const selectedProvider = computed({
+  get: () => store.aiProvider || 'custom',
+  set: (v) => store.selectProvider(v),
+})
+const activeProvider = computed(() => store.activeProvider)
+const currentModels = computed(() => activeProvider.value?.models || [])
+const selectedModel = computed({
+  get: () => store.aiModel || '',
+  set: (v) => store.selectModel(v),
+})
+const switchingProvider = computed(() => store.switchingProvider)
+const loadingProviders = computed(() => store.loadingProviders)
+const providerError = computed(() => store.providerError)
 
 function onFiles(e) {
   const f = e.target.files?.[0] || e.dataTransfer?.files?.[0]
@@ -35,9 +54,7 @@ function submit() {
     <h2 class="mb-4 text-base font-semibold text-slate-100">上传网球视频</h2>
 
     <label class="mb-3 flex cursor-pointer items-center justify-between rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm">
-      <span class="text-slate-300">
-        分析层级
-      </span>
+      <span class="text-slate-300">分析层级</span>
       <div class="flex gap-1">
         <button
           v-for="lv in LEVELS"
@@ -55,6 +72,45 @@ function submit() {
         </button>
       </div>
     </label>
+
+    <label class="mb-3 flex cursor-pointer items-center justify-between rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm">
+      <span class="text-slate-300">服务商</span>
+      <div class="flex w-56 items-center justify-end gap-2">
+        <select
+          v-if="providerOptions.length"
+          v-model="selectedProvider"
+          :disabled="switchingProvider"
+          class="max-w-full truncate rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 outline-none transition focus:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <option v-for="o in providerOptions" :key="o.value" :value="o.value">
+            {{ o.label }}{{ activeProvider && activeProvider.name === o.value ? ' ✓' : '' }}
+          </option>
+        </select>
+        <span v-else-if="loadingProviders" class="text-xs text-slate-400">加载模型中…</span>
+        <span v-else class="text-xs text-slate-500">无可用模型</span>
+      </div>
+    </label>
+
+    <label class="mb-3 flex cursor-pointer items-center justify-between rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm">
+      <span class="text-slate-300">模型</span>
+      <div class="flex w-56 items-center justify-end gap-2">
+        <select
+          v-if="currentModels.length"
+          v-model="selectedModel"
+          :disabled="switchingProvider"
+          class="max-w-full truncate rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 outline-none transition focus:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <option value="">跟随服务商默认（{{ activeProvider?.default_model || '' }}）</option>
+          <option v-for="m in currentModels" :key="m" :value="m">
+            {{ m }}
+          </option>
+        </select>
+        <span v-else-if="loadingProviders" class="text-xs text-slate-400">加载模型中…</span>
+        <span v-else class="text-xs text-slate-500">无可用模型</span>
+      </div>
+    </label>
+
+    <p v-if="providerError" class="mb-3 -mt-1 text-right text-xs text-red-300">{{ providerError }}</p>
 
     <div
       :class="[

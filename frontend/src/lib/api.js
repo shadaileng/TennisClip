@@ -75,4 +75,72 @@ export const api = {
   videoUrl(taskId) {
     return url(`/api/v1/tasks/${encodeURIComponent(taskId)}/video`)
   },
+
+  // 模型服务商列表（id/name/base_url/api_key 掩码/models/default_model/enabled/sort_order/is_selected）
+  async listProviders() {
+    const res = await fetch(url('/api/v1/db/providers'))
+    return parse(res)
+  },
+
+  // 新增模型服务商
+  async createProvider(payload) {
+    const res = await fetch(url('/api/v1/db/providers'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return parse(res)
+  },
+
+  // 编辑模型服务商（按 id 定位；api_key 留空表示保留原值）
+  async updateProvider(id, payload) {
+    const res = await fetch(url(`/api/v1/db/providers/${encodeURIComponent(id)}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return parse(res)
+  },
+
+  // 删除模型服务商（按 id；被 ai.provider 引用时后端返回 409）
+  async deleteProvider(id) {
+    const res = await fetch(url(`/api/v1/db/providers/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+    })
+    return parse(res)
+  },
+
+  // 校验模型可用性：list（GET /models）或逐模型 chat/completions 探测
+  async checkProviderModels(payload) {
+    const res = await fetch(url('/api/v1/db/providers/check-models'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return parse(res)
+  },
+
+  // 配置 KV 列表（ai.provider/ai.model/ai.api_key/ai.base_url）
+  async loadConfig() {
+    const res = await fetch(url('/api/v1/config'))
+    return parse(res)
+  },
+
+  // 设置配置覆盖（切换服务商 ai.provider / 覆盖模型 ai.model）
+  async configSet(key, value) {
+    const res = await fetch(url(`/api/v1/config/${encodeURIComponent(key)}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    })
+    return parse(res)
+  },
+
+  // 删除配置覆盖（恢复默认值）
+  async configDelete(key) {
+    const res = await fetch(url(`/api/v1/config/${encodeURIComponent(key)}`), {
+      method: 'DELETE',
+    })
+    return parse(res)
+  },
 }

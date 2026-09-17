@@ -4,11 +4,14 @@ import { useTaskStore } from './stores/task'
 import HealthBar from './components/HealthBar.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import TaskCard from './components/TaskCard.vue'
+import ProviderManageModal from './components/ProviderManageModal.vue'
 
 const store = useTaskStore()
 
 onMounted(() => {
   store.checkHealth()
+  store.loadConfig()
+  store.loadProviders()
   // 页面卸载时停止轮询
   window.addEventListener('pagehide', onUnload)
 })
@@ -34,6 +37,13 @@ function onUnload() {
           </h1>
         </div>
         <HealthBar :health="store.health" />
+        <button
+          type="button"
+          class="rounded-lg border border-emerald-500/50 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10"
+          @click="store.openManage()"
+        >
+          模型管理
+        </button>
       </div>
     </header>
 
@@ -55,5 +65,7 @@ function onUnload() {
     <footer class="mx-auto max-w-5xl px-4 py-6 text-center text-xs text-slate-500">
       基于阶跃星辰 Step 3.7 Flash · OpenAI 兼容协议 · 全链路自动化高光剪辑与技术分析
     </footer>
+
+    <ProviderManageModal :open="store.managing" @close="store.closeManage()" />
   </div>
 </template>
