@@ -83,30 +83,28 @@ class _EffProvider:
 
 
 def _resolve_effective_provider(config: "AppConfig") -> _EffProvider:
-    """解析当前生效提供商：优先数据库 model_providers 的 is_active 记录（运行时动态切换），
+    """解析当前生效提供商：优先配置 KV 引用的服务商（运行时动态切换），
     DB 不可用或无记录时回退静态 config.active_provider。"""
-    from app.services import db_service
+    from app.services import config_service, db_service
 
     try:
-        db_p = db_service.get_active_provider()
+        with db_service.session() as s:
+            ai = config_service.get_ai_config(s, config)
     except Exception as exc:  # noqa: BLE001
         logger.warning("提供商解析回退静态配置（DB 查询失败）：{}", exc)
-        db_p = None
-
-    if db_p is not None:
-        api_key = os.environ.get(db_p.api_key_env, "")
+        try:
+            p = config.active_provider
+            model = p.model or (p.models[0] if p.models else "")
+        except ValueError as exc2:
+            return _EffProvider(error=str(exc2))
         return _EffProvider(
-            name=db_p.name, base_url=db_p.base_url, model=db_p.model,
-            api_key=api_key, source="database",
+            name="custom", base_url=p.base_url, model=model,
+            api_key=config.api_key, source="config",
         )
 
-    try:
-        p = config.active_provider
-    except ValueError as exc:
-        return _EffProvider(error=str(exc))
     return _EffProvider(
-        name=p.name, base_url=p.base_url, model=p.model,
-        api_key=config.api_key, source="config",
+        name=ai.provider, base_url=ai.base_url, model=ai.model,
+        api_key=ai.api_key, source=ai.source,
     )
 
 

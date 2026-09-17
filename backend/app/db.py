@@ -79,15 +79,19 @@ def init_db(engine: Engine) -> None:
 
     _apply_migrations_or_create(engine)
 
-    # 初始化 model_providers 种子（若为空）
+    # 初始化 ai_providers / system_config 种子（若为空）
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     with SessionLocal() as session:
-        if not session.query(db_models.ModelProvider).count():
-            from app.config import load_config
+        from app.config import load_config
 
+        if not session.query(db_models.AiProvider).count():
             session.add_all(db_models._seed_providers(load_config()))
             session.commit()
-            logger.info("db: seeded model providers")
+            logger.info("db: seeded ai providers")
+        if not session.query(db_models.SystemConfig).count():
+            db_models._seed_system_config(load_config(), session)
+            session.commit()
+            logger.info("db: seeded system config")
 
 
 def _apply_migrations_or_create(engine: Engine) -> None:

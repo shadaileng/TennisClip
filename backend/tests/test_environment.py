@@ -100,9 +100,12 @@ def _provider_config(api_key_env: str = "FOO", mock_mode: str = "auto") -> AppCo
 
 
 def test_check_provider_ok_with_key(monkeypatch):
+    # 未初始化 DB 时 _resolve_effective_provider 回落静态 config（ai.provider=default）
+    from app.services import db_service
+
+    monkeypatch.setattr(db_service, "_SessionLocal", None)  # 强制回落静态 config，隔离真实 DB
     from app.utils.environment import check_provider
 
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = _provider_config()
     monkeypatch.setenv("FOO", "secret")
     assert check_provider(cfg).status == "ok"
@@ -111,7 +114,6 @@ def test_check_provider_ok_with_key(monkeypatch):
 def test_check_provider_warn_mock_auto(monkeypatch):
     from app.utils.environment import check_provider
 
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = _provider_config()
     monkeypatch.delenv("FOO", raising=False)
     result = check_provider(cfg)
@@ -122,16 +124,17 @@ def test_check_provider_warn_mock_auto(monkeypatch):
 def test_check_provider_fail_mock_never(monkeypatch):
     from app.utils.environment import check_provider
 
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = _provider_config(mock_mode="never")
     monkeypatch.delenv("FOO", raising=False)
     assert check_provider(cfg).status == "fail"
 
 
 def test_check_provider_fail_missing_field(monkeypatch):
+    from app.services import db_service
+
+    monkeypatch.setattr(db_service, "_SessionLocal", None)
     from app.utils.environment import check_provider
 
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = AppConfig()
     cfg.llm = LLMConfig(
         providers={"default": ProviderConfig(
@@ -147,9 +150,11 @@ def test_check_provider_fail_missing_field(monkeypatch):
 
 
 def test_check_provider_fail_unresolved(monkeypatch):
+    from app.services import db_service
+
+    monkeypatch.setattr(db_service, "_SessionLocal", None)
     from app.utils.environment import check_provider
 
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
     cfg = AppConfig()  # providers 为空，active_provider 无法解析
     assert check_provider(cfg).status == "fail"
 
@@ -186,7 +191,6 @@ def test_check_data_dir_fail(monkeypatch, tmp_path):
 def test_run_startup_checks_structure(monkeypatch, tmp_path):
     monkeypatch.setattr("app.utils.ffmpeg.is_available", lambda: True)
     monkeypatch.setattr("app.db.get_engine", lambda config: _FakeEngine())
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: None)
 
     cfg = _provider_config()
     monkeypatch.setenv("FOO", "secret")
@@ -200,16 +204,13 @@ def test_run_startup_checks_structure(monkeypatch, tmp_path):
         assert result.status in {"ok", "warn", "fail"}
 
 
-def test_get_active_provider_from_db(tmp_path, monkeypatch):
-    """生效提供商应以数据库 is_active 记录为准，activate 后立即反映。
-
-    直接建表（不走 db_service.init_db 的 Alembic 路径，避免污染 stdlib 日志拦截），
-    仅验证 get_active_provider / activate_provider 的 is_active 读取逻辑。
-    """
+def _seed_engine(tmp_path, monkeypatch, cfg):
+    """建表并把 db_service 引擎指向测试库，写入 ai_providers + system_config。"""
     import app.db_models  # noqa: F401  确保 ORM 注册
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
+    from app.db_models import AiProvider, SystemConfig, _seed_system_config as db_models_seed_system_config
     from app.services import db_service
 
     (tmp_path / "data").mkdir(parents=True, exist_ok=True)
@@ -217,6 +218,21 @@ def test_get_active_provider_from_db(tmp_path, monkeypatch):
     engine = create_engine(url)
     app.db_models.Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+    with SessionLocal() as s:
+        if s.query(AiProvider).count() == 0:
+            s.add_all(db_service._seed_providers(cfg))
+            s.commit()
+        db_models_seed_system_config(cfg, s)
+        s.commit()
+    monkeypatch.setattr(db_service, "_engine", engine)
+    monkeypatch.setattr(db_service, "_SessionLocal", SessionLocal)
+    return engine
+
+
+def test_resolve_effective_provider_from_db(tmp_path, monkeypatch):
+    """_resolve_effective_provider 优先返回 ai.provider 引用的服务商记录（含 api_key）。"""
+    from app.db_models import _seed_system_config as db_models_seed_system_config
+    from app.utils.environment import _resolve_effective_provider
 
     cfg = AppConfig()
     cfg.llm = LLMConfig(
@@ -226,36 +242,40 @@ def test_get_active_provider_from_db(tmp_path, monkeypatch):
         },
         active_provider="default",
     )
-    with SessionLocal() as s:
-        if s.query(app.db_models.ModelProvider).count() == 0:
-            s.add_all(app.db_models._seed_providers(cfg))
-            s.commit()
+    # 默认种子把 ai.provider 设为 active_provider='default'
+    engine = _seed_engine(tmp_path, monkeypatch, cfg)
 
-    monkeypatch.setattr(db_service, "_engine", engine)
-    monkeypatch.setattr(db_service, "_SessionLocal", SessionLocal)
+    eff = _resolve_effective_provider(cfg)
+    assert eff.name == "default"
+    assert eff.api_key == ""  # 种子密钥为空
+    assert eff.model == "m"
+    assert eff.source == "database"
 
-    p = db_service.get_active_provider()
-    assert p is not None and p.name == "default" and p.is_active is True
+    # 切换 ai.provider 到 openai
+    from app.db_models import SystemConfig
+    from app.services import db_service
 
-    assert db_service.activate_provider("openai") is True
-    p2 = db_service.get_active_provider()
-    assert p2.name == "openai" and p2.is_active is True
+    with db_service.session() as s:
+        row = s.query(SystemConfig).filter_by(key="ai.provider").first()
+        row.value = "openai"
+        s.commit()
+    eff2 = _resolve_effective_provider(cfg)
+    assert eff2.name == "openai"
+    assert eff2.base_url == "http://o"
+    assert eff2.source == "database"
 
 
-def test_resolve_effective_provider_prefers_db(monkeypatch):
-    """_resolve_effective_provider 优先返回数据库生效记录。"""
+def test_resolve_effective_provider_db_unavailable_falls_back(monkeypatch):
+    """DB 不可用时回落静态 config（source=config）。"""
     from app.utils.environment import _resolve_effective_provider
 
-    class _FakeDB:
-        name = "db_active"
-        base_url = "http://db"
-        model = "db-model"
-        api_key_env = "FOO"
-
-    monkeypatch.setattr("app.services.db_service.get_active_provider", lambda: _FakeDB())
-    monkeypatch.setenv("FOO", "k")
-
-    eff = _resolve_effective_provider(AppConfig())
-    assert eff.name == "db_active"
-    assert eff.api_key == "k"
-    assert eff.source == "database"
+    monkeypatch.setattr("app.services.db_service.session", None)  # 触发 DB 查询失败
+    cfg = AppConfig()
+    cfg.llm = LLMConfig(
+        providers={"default": ProviderConfig(name="default", base_url="http://x", api_key_env="FOO", model="m")},
+        active_provider="default",
+    )
+    eff = _resolve_effective_provider(cfg)
+    assert eff.name == "custom"
+    assert eff.base_url == "http://x"
+    assert eff.source == "config"

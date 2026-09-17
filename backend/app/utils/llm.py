@@ -2,7 +2,7 @@
 
 - 使用 OpenAI 官方 SDK 的 OpenAI() 客户端格式，按 provider 三要素构造：
   - base_url  : OpenAI 兼容端点（含 /v1）
-  - api_key   : 由 .env 中当前 provider 的 api_key_env 指定变量读取
+  - api_key   : 由 model_providers 表直接存储（api_key 字段），DB 分支优先；静态兜底回退 env
   - model     : 请求体 "model" 字段
   支持任何 OpenAI 兼容端点：OpenAI 官方、StepFun、Ollama、vLLM 等。
 - mock_mode:
@@ -45,27 +45,33 @@ def _is_mock_mode(config: AppConfig, api_key: Optional[str] = None) -> bool:
 
 
 def _resolve_provider(config: AppConfig) -> Tuple[object, str]:
-    """解析当前生效提供商（优先数据库 is_active 记录，回退静态配置）。
+    """解析当前生效提供商（优先配置 KV 引用的服务商，回退静态配置）。
 
     返回 (provider, api_key)：provider 具 name / base_url / model 属性。
-    使 /api/v1/db/providers/{name}/activate 的切换在推理时真正生效。
+    使 /api/v1/config 切换 ai.provider / ai.model 在推理时真正生效。
     """
-    from app.services import db_service
+    from app.services import config_service, db_service
 
     try:
-        db_p = db_service.get_active_provider()
+        with db_service.session() as s:
+            ai = config_service.get_ai_config(s, config)
     except Exception as exc:  # noqa: BLE001
         logger.warning("llm: 提供商解析回退静态配置（DB 查询失败）：{}", exc)
-        db_p = None
+        try:
+            active = config.active_provider
+            base = active.base_url
+            model = active.model or (active.models[0] if active.models else "")
+        except ValueError:
+            base, model = "", ""
+        ai = config_service.AIConfig(
+            api_key=config.api_key, base_url=base, model=model,
+            provider="custom", source="config",
+        )
 
-    if db_p is not None:
-        api_key = os.environ.get(db_p.api_key_env, "")
-        provider = SimpleNamespace(name=db_p.name, base_url=db_p.base_url, model=db_p.model)
-        logger.debug("llm: 使用数据库生效提供商 {}", db_p.name)
-        return provider, api_key
-
-    provider = config.active_provider
-    return provider, config.api_key
+    api_key = ai.api_key or ""
+    provider = SimpleNamespace(name=ai.provider, base_url=ai.base_url, model=ai.model)
+    logger.debug("llm: 使用生效服务商 {}", ai.provider)
+    return provider, api_key
 
 
 def _extract_json(text: str) -> Optional[dict]:

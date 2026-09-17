@@ -31,11 +31,16 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass
 class ProviderConfig:
-    """单个模型提供商（OpenAI 兼容协议格式）。"""
+    """单个模型提供商（OpenAI 兼容协议格式）。
+
+    model 为兼容旧配置的单模型字段；models 为模型列表（优先），
+    缺省由 model 包装为单元素列表。api_key 仍走环境变量名（api_key_env）。
+    """
     name: str = ""
     base_url: str = ""
     api_key_env: str = ""
     model: str = ""
+    models: list = field(default_factory=list)
 
 
 @dataclass
@@ -201,14 +206,19 @@ class AppConfig:
 
 
 def _build_provider_list(data: list[dict]) -> dict:
-    """将 YAML 中的 providers 列表转为 name → ProviderConfig 字典。"""
+    """将 YAML 中的 providers 列表转为 name → ProviderConfig 字典。
+
+    优先取 models 列表；缺省由 model 字段包装为单元素列表。
+    """
     result: dict = {}
     for item in data:
+        models = item.get("models") or ([item["model"]] if item.get("model") else [])
         provider = ProviderConfig(
             name=item.get("name", ""),
             base_url=item.get("base_url", ""),
             api_key_env=item.get("api_key_env", ""),
             model=item.get("model", ""),
+            models=models,
         )
         result[provider.name] = provider
     return result

@@ -108,9 +108,9 @@ def test_db_models_import():
     from app import db_models
 
     assert db_models.Base is not None
-    # 六张表
+    # 六张表（含 ai_providers 与 system_config 配置表）
     tables = set(db_models.Base.metadata.tables.keys())
-    expected = {"tasks", "task_inputs", "task_outputs", "task_results", "model_providers", "files"}
+    expected = {"tasks", "task_inputs", "task_outputs", "task_results", "ai_providers", "system_config", "files"}
     assert expected.issubset(tables), f"missing tables: {expected - tables}"
 
 
@@ -118,7 +118,7 @@ def test_db_service_roundtrip():
     """DB 服务层完整读写：任务/输入/输出/结果快照/提供商切换。"""
     from app.services import db_service
     from app.config import load_config
-    from app.db_models import Task, TaskInput, TaskOutput, TaskResult as TRModel, ModelProvider, FileRecord
+    from app.db_models import Task, TaskInput, TaskOutput, TaskResult as TRModel, FileRecord
 
     # 测试库落入 data_test/（测试环境统一数据目录），测试后清理，不触碰真实 data/
     cfg = load_config()
@@ -157,12 +157,18 @@ def test_db_service_roundtrip():
         r = s.query(TRModel).filter_by(task_id=task_id).first()
         assert r is not None and r.report_json is not None
 
-    # 提供商种子 + 动态切换
+    # 提供商种子 + 配置直选（ai.provider 覆盖）
     providers = db_service.list_providers()
-    assert any(p.name == "default" for p in providers)
-    assert db_service.activate_provider("openai")
-    active = [p for p in db_service.list_providers() if p.is_active]
-    assert len(active) == 1 and active[0].name == "openai"
+    assert any(p["name"] == "default" for p in providers)
+    default = next(p for p in providers if p["name"] == "default")
+    assert default["is_selected"] is True  # 种子默认选中 active_provider
+
+    from app.services import config_service
+
+    with db_service.session() as s:
+        config_service.set_config_value(s, "ai.provider", "openai")
+    selected = [p for p in db_service.list_providers() if p["is_selected"]]
+    assert len(selected) == 1 and selected[0]["name"] == "openai"
 
     # 清理（关闭引擎释放锁后再删；Windows 下若仍被占用则跳过删除不影响断言）
     try:

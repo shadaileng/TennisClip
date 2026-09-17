@@ -17,15 +17,18 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.config import AppConfig
 from app.db import _apply_migrations_or_create
 from app.db_models import (
+    AiProvider,
     Base,
     FileRecord,
-    ModelProvider,
+    SystemConfig,
     Task,
     TaskInput,
     TaskOutput,
     TaskResult,
     _seed_providers,
+    _seed_system_config,
 )
+from app.services import config_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -60,12 +63,18 @@ def init_db(config: AppConfig) -> None:
     # 优先 Alembic 迁移，create_all 兜底（对无 alembic_version 的库自动 stamp head）
     _apply_migrations_or_create(_engine)
 
-    # 导入 model_providers 种子（若表为空）
+    # 导入 ai_providers / system_config 种子（若表为空）
     with _SessionLocal() as session:
-        if session.query(ModelProvider).count() == 0:
+        from app.config import load_config
+
+        if session.query(AiProvider).count() == 0:
             session.add_all(_seed_providers(config))
             session.commit()
-            logger.info("db: seeded {} model providers", len(config.llm.providers))
+            logger.info("db: seeded {} ai providers", len(config.llm.providers))
+        if session.query(SystemConfig).count() == 0:
+            _seed_system_config(config, session)
+            session.commit()
+            logger.info("db: seeded system config")
 
     logger.info("db: initialized ({})", _mask(url))
     return None
@@ -195,45 +204,195 @@ def mark_file_removed(file_path: str, task_id: Optional[str] = None) -> None:
         logger.warning("db: mark_file_removed failed: {}", exc)
 
 
-# ---------- 模型提供商（数据库动态切换） ----------
+# ---------- 模型提供商（数据库动态切换 + 多模型管理） ----------
 
-def list_providers() -> list[ModelProvider]:
+class ProviderNotFound(ValueError):
+    """指定的提供商不存在。"""
+
+
+class ProviderConflict(ValueError):
+    """操作与现有状态冲突（如名称重复、删除激活项）。"""
+
+
+def mask_secret(value: Optional[str]) -> str:
+    """掩码敏感串（对齐 TennisDiary：前3 + 末4）。委托 config_service。"""
+    return config_service.mask_secret(value or "")
+
+
+def _normalize_models(models) -> list[str]:
+    """清洗模型列表：逐项 trim、去空、去重保序。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in models or []:
+        m = str(m).strip()
+        if m and m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
+
+
+def _provider_to_dict(p: AiProvider, mask: bool = True, selected_name: str = "") -> dict:
+    """将 ORM 行转为接口 dict（mask=True 时 api_key 掩码；is_selected 由 ai.provider 计算）。"""
+    return {
+        "id": p.id,
+        "name": p.name,
+        "base_url": p.base_url,
+        "api_key": mask_secret(p.api_key) if mask else (p.api_key or ""),
+        "models": p.models,
+        "default_model": p.default_model,
+        "enabled": bool(p.enabled),
+        "sort_order": p.sort_order,
+        "is_selected": p.name == selected_name,
+        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+def list_providers() -> list[dict]:
+    """返回全部服务商（按 sort_order、name 排序），api_key 已掩码，含 is_selected。"""
     try:
         with session() as s:
-            return s.query(ModelProvider).all()
+            selected_name = config_service.get_config_value(s, "ai.provider")
+            rows = s.query(AiProvider).order_by(AiProvider.sort_order, AiProvider.name).all()
+            return [_provider_to_dict(p, selected_name=selected_name) for p in rows]
     except Exception as exc:  # noqa: BLE001
         logger.warning("db: list_providers failed: {}", exc)
         return []
 
 
-def activate_provider(name: str) -> bool:
-    """把指定 name 的 provider 设为 active（其他置 false）。"""
+def get_provider_by_name(name: str) -> Optional[AiProvider]:
     try:
         with session() as s:
-            for p in s.query(ModelProvider).all():
-                p.is_active = (p.name == name)
-            s.commit()
-        return True
+            return s.query(AiProvider).filter_by(name=name).first()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("db: activate_provider failed: {}", exc)
-        return False
-
-
-def get_active_provider() -> Optional[ModelProvider]:
-    """返回当前生效（is_active=True）的提供商；无激活记录时取第一条；DB 故障时返回 None。
-
-    这是「运行时动态切换」的单一事实来源：/health、启动自检、LLM 调用均优先读此记录，
-    DB 不可用时由调用方回退静态 config.active_provider。
-    """
-    try:
-        with session() as s:
-            p = s.query(ModelProvider).filter_by(is_active=True).first()
-            if p is None:
-                p = s.query(ModelProvider).first()
-            return p
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("db: get_active_provider failed: {}", exc)
+        logger.warning("db: get_provider_by_name failed: {}", exc)
         return None
+
+
+def get_provider_by_id(provider_id: int) -> Optional[AiProvider]:
+    try:
+        with session() as s:
+            return s.query(AiProvider).filter_by(id=provider_id).first()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: get_provider_by_id failed: {}", exc)
+        return None
+
+
+def create_provider(
+    name: str,
+    base_url: str,
+    api_key: str,
+    models: list[str],
+    enabled: bool = True,
+    sort_order: int = 0,
+) -> dict:
+    """新增服务商；返回掩码后的 dict。
+
+    校验：name 非空且唯一、base_url 须 http(s)://、models 至少 1 项。
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ProviderNotFound("服务商名称不能为空")
+    if not str(base_url).strip().lower().startswith(("http://", "https://")):
+        raise ValueError("base_url 须以 http:// 或 https:// 开头")
+    clean_models = _normalize_models(models)
+    if not clean_models:
+        raise ValueError("models 至少需包含 1 个模型")
+
+    try:
+        with session() as s:
+            if s.query(AiProvider).filter_by(name=name).first():
+                raise ProviderConflict(f"服务商名称已存在：{name}")
+            p = AiProvider(
+                name=name,
+                base_url=str(base_url).strip(),
+                api_key=(api_key or "").strip(),
+                models=clean_models,
+                enabled=1 if enabled else 0,
+                sort_order=int(sort_order or 0),
+            )
+            s.add(p)
+            s.commit()
+            s.refresh(p)
+            selected_name = config_service.get_config_value(s, "ai.provider")
+            return _provider_to_dict(p, selected_name=selected_name)
+    except (ProviderNotFound, ProviderConflict, ValueError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: create_provider failed: {}", exc)
+        raise ValueError(f"新增服务商失败：{exc}") from exc
+
+
+def update_provider(
+    provider_id: int,
+    name: str,
+    base_url: str,
+    api_key: str,
+    models: list[str],
+    enabled: bool = True,
+    sort_order: int = 0,
+) -> dict:
+    """编辑服务商（按 id 定位）；api_key 为空表示保留原值。返回掩码后的 dict。"""
+    name = (name or "").strip()
+    if not name:
+        raise ProviderNotFound("服务商名称不能为空")
+    if not str(base_url).strip().lower().startswith(("http://", "https://")):
+        raise ValueError("base_url 须以 http:// 或 https:// 开头")
+    clean_models = _normalize_models(models)
+    if not clean_models:
+        raise ValueError("models 至少需包含 1 个模型")
+
+    try:
+        with session() as s:
+            p = s.query(AiProvider).filter_by(id=provider_id).first()
+            if p is None:
+                raise ProviderNotFound(f"服务商不存在：id={provider_id}")
+            if name != p.name and s.query(AiProvider).filter_by(name=name).first():
+                raise ProviderConflict(f"服务商名称已存在：{name}")
+            p.name = name
+            p.base_url = str(base_url).strip()
+            if api_key:  # 留空保留原密钥
+                p.api_key = api_key.strip()
+            p.models = clean_models
+            p.enabled = 1 if enabled else 0
+            p.sort_order = int(sort_order or 0)
+            s.commit()
+            s.refresh(p)
+            selected_name = config_service.get_config_value(s, "ai.provider")
+            return _provider_to_dict(p, selected_name=selected_name)
+    except (ProviderNotFound, ProviderConflict, ValueError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: update_provider failed: {}", exc)
+        raise ValueError(f"编辑服务商失败：{exc}") from exc
+
+
+def delete_provider(provider_id: int) -> None:
+    """按 id 删除服务商；被当前 ai.provider 直选引用的服务商拒绝（409）。"""
+    try:
+        with session() as s:
+            p = s.query(AiProvider).filter_by(id=provider_id).first()
+            if p is None:
+                raise ProviderNotFound(f"服务商不存在：id={provider_id}")
+            selected_name = config_service.get_config_value(s, "ai.provider") or "custom"
+            if selected_name == p.name:
+                raise ProviderConflict(
+                    f"服务商「{p.name}」正被 ai.provider 引用，请先在配置中切换服务商"
+                )
+            s.delete(p)
+            s.commit()
+    except (ProviderNotFound, ProviderConflict):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: delete_provider failed: {}", exc)
+        raise ValueError(f"删除服务商失败：{exc}") from exc
+
+
+def delete_provider_by_name(name: str) -> None:
+    """按 name 删除服务商（便捷封装）。"""
+    p = get_provider_by_name(name)
+    if p is None:
+        raise ProviderNotFound(f"服务商不存在：{name}")
+    delete_provider(p.id)
 
 
 # ---------- 查询 ----------

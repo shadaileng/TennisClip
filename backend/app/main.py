@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 import uuid
 from pathlib import Path
@@ -23,7 +22,6 @@ from app.utils.logger import get_logger, setup_logging
 from app.utils.tasks import TaskQueue
 from app.core import run_pipeline
 from app.services import db_service
-from app.db_models import ModelProvider
 
 # 尽早接管日志（含 uvicorn 内置日志），保证启动期日志统一格式输出
 setup_logging()
@@ -69,28 +67,32 @@ def _shutdown() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    """健康检查：provider 块反映数据库生效记录（is_active），DB 不可用时回退静态配置。"""
-    active = db_service.get_active_provider()
-    if active is not None:
+    """健康检查：provider 块反映配置 KV 引用的生效服务商，DB 不可用时回退静态配置。"""
+    from app.services import config_service
+
+    try:
+        with db_service.session() as s:
+            ai = config_service.get_ai_config(s, config)
         provider = {
-            "name": active.name,
-            "model": active.model,
-            "base_url": active.base_url,
-            "api_key_set": bool(os.environ.get(active.api_key_env, "")),
-            "source": "database",
+            "name": ai.provider,
+            "model": ai.model,
+            "base_url": ai.base_url,
+            "api_key_set": bool(ai.api_key),
+            "source": ai.source,
         }
-    else:
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health: 提供商解析回退静态配置：{}", exc)
         try:
             p = config.active_provider
             provider = {
-                "name": p.name,
-                "model": p.model,
+                "name": "custom",
+                "model": p.model or (p.models[0] if p.models else ""),
                 "base_url": p.base_url,
                 "api_key_set": bool(config.api_key),
                 "source": "config",
             }
-        except ValueError as exc:
-            logger.warning("health: 无法解析静态 provider：{}", exc)
+        except ValueError as exc2:
+            logger.warning("health: 无法解析静态 provider：{}", exc2)
             provider = {
                 "name": None, "model": None,
                 "base_url": None, "api_key_set": False, "source": "config",
@@ -183,26 +185,106 @@ def db_task_history(limit: int = 50) -> list[dict]:
 
 @app.get("/api/v1/db/providers")
 def db_providers() -> list[dict]:
-    """模型提供商列表（数据库动态配置）。"""
-    return [
-        {
-            "name": p.name,
-            "base_url": p.base_url,
-            "api_key_env": p.api_key_env,
-            "model": p.model,
-            "is_active": p.is_active,
-        }
-        for p in db_service.list_providers()
-    ]
+    """模型服务商列表（数据库动态配置）；api_key 已掩码，含 is_selected。"""
+    return db_service.list_providers()
 
 
-@app.post("/api/v1/db/providers/{name}/activate")
-def activate_provider(name: str) -> dict:
-    """切换当前生效的模型提供商（数据库动态切换）。"""
-    ok = db_service.activate_provider(name)
-    if not ok:
-        raise HTTPException(404, f"provider '{name}' not found in database")
-    return {"ok": True, "active_provider": name}
+@app.post("/api/v1/db/providers")
+def create_provider(payload: dict) -> dict:
+    """新增模型服务商（name/base_url/api_key/models 必填，enabled/sort_order 可选）。"""
+    try:
+        return db_service.create_provider(
+            name=payload.get("name", ""),
+            base_url=payload.get("base_url", ""),
+            api_key=payload.get("api_key", "") or "",
+            models=payload.get("models", []) or [],
+            enabled=bool(payload.get("enabled", True)),
+            sort_order=int(payload.get("sort_order", 0) or 0),
+        )
+    except db_service.ProviderConflict as exc:
+        raise HTTPException(409, str(exc))
+    except db_service.ProviderNotFound as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.put("/api/v1/db/providers/{provider_id}")
+def update_provider(provider_id: int, payload: dict) -> dict:
+    """编辑模型服务商（按 id 定位；api_key 留空表示保留原值）。"""
+    try:
+        return db_service.update_provider(
+            provider_id=provider_id,
+            name=payload.get("name", ""),
+            base_url=payload.get("base_url", ""),
+            api_key=payload.get("api_key", "") or "",
+            models=payload.get("models", []) or [],
+            enabled=bool(payload.get("enabled", True)),
+            sort_order=int(payload.get("sort_order", 0) or 0),
+        )
+    except db_service.ProviderConflict as exc:
+        raise HTTPException(409, str(exc))
+    except db_service.ProviderNotFound as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.delete("/api/v1/db/providers/{provider_id}")
+def delete_provider(provider_id: int) -> dict:
+    """删除模型服务商；被当前 ai.provider 直选引用的服务商返回 409。"""
+    try:
+        db_service.delete_provider(provider_id)
+    except db_service.ProviderConflict as exc:
+        raise HTTPException(409, str(exc))
+    except db_service.ProviderNotFound as exc:
+        raise HTTPException(404, str(exc))
+    return {"ok": True, "deleted": provider_id}
+
+
+@app.post("/api/v1/db/providers/check-models")
+async def check_models(payload: dict) -> dict:
+    """校验模型可用性：list（GET /models）或逐模型 probe（chat/completions）。"""
+    from app.services import provider_probe
+
+    try:
+        return await provider_probe.check_models(
+            base_url=payload.get("base_url", "") or "",
+            api_key=payload.get("api_key", "") or "",
+            models=payload.get("models", []) or [],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("check-models 失败: {}", exc)
+        raise HTTPException(500, f"校验失败: {exc}")
+
+
+# ---------- 配置 KV 端点（ai.provider / ai.model 等覆盖） ----------
+
+@app.get("/api/v1/config")
+def config_list() -> list[dict]:
+    """配置项列表（DB 覆盖 > 默认值），api_key 掩码，select 项含动态选项。"""
+    from app.services import config_service
+
+    with db_service.session() as s:
+        return config_service.build_config_list(s, config)
+
+
+@app.put("/api/v1/config/{key}")
+def config_set(key: str, payload: dict) -> dict:
+    """设置配置覆盖（ai.provider 切换服务商、ai.model 覆盖模型）。"""
+    from app.services import config_service
+
+    with db_service.session() as s:
+        return config_service.set_config_value(s, key, payload.get("value", "") or "")
+
+
+@app.delete("/api/v1/config/{key}")
+def config_delete(key: str) -> dict:
+    """删除配置覆盖（恢复默认值）。"""
+    from app.services import config_service
+
+    with db_service.session() as s:
+        return config_service.delete_config_value(s, key, config)
 
 
 # ---------- 前端静态资源托管 ----------
