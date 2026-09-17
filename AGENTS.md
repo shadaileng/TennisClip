@@ -89,13 +89,20 @@ TennisClip/
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |
-| GET | `/api/v1/db/providers` | 模型提供商列表（数据库） |
-| POST | `/api/v1/db/providers/{name}/activate` | 切换当前生效的模型提供商 |
+| GET | `/api/v1/db/providers` | 模型服务商列表（数据库；字段 id/name/base_url/**api_key(掩码)**/models/default_model/enabled/sort_order/is_selected） |
+| POST | `/api/v1/db/providers` | 新增服务商（body: name/base_url/api_key/models/enabled/sort_order；重复名 409、base_url 须 http(s)、models 至少 1 项） |
+| PUT | `/api/v1/db/providers/{id}` | 编辑服务商（按 id 定位；api_key 留空表示保留原值；重复名 409） |
+| DELETE | `/api/v1/db/providers/{id}` | 删除服务商（被 `ai.provider` 直选引用时返回 409） |
+| POST | `/api/v1/db/providers/check-models` | 校验模型可用性：body 传 `base_url`/`api_key`/`models`，返回 list（GET /models）或逐模型 probe（chat/completions）结果 |
+| GET | `/api/v1/config` | 配置 KV 列表（ai.provider/ai.model/ai.api_key/ai.base_url；select 项含动态选项、secret 掩码、source 标明 db/config/env/builtin） |
+| PUT | `/api/v1/config/{key}` | 设置配置覆盖（如 `ai.provider` 切换服务商、`ai.model` 覆盖模型；secret 空值=保留、等于默认值=自动删行） |
+| DELETE | `/api/v1/config/{key}` | 删除配置覆盖（恢复默认值） |
 
-模型提供商以 OpenAI 兼容三要素（`base_url` / `api_key_env` / `model`）在 `backend/config.yaml` 的 `llm.providers` 声明，通过 `llm.active_provider` 切换；该结构已落地到数据库 `model_providers` 表，支持运行时动态切换。未配置 API Key 时 LLM 客户端自动回退 **Mock 模式**（`llm.mock_mode: auto`）。
+模型服务商以 OpenAI 兼容三要素（`base_url` / `api_key` / `models`）在 `backend/config.yaml` 的 `llm.providers` 声明（`models` 优先，缺省由 `model` 包装为单元素列表），通过 `llm.active_provider` 切换；该结构已落地到数据库 `ai_providers` 表（纯凭据目录：`id` 主键、`name` 唯一、`enabled` 用 int、无 `is_active`/`selected_model`）。`api_key` **直接入库明文**、列表/详情接口以掩码返回（**前 3 + 末 4 位**，如 `sk-****cdef`），管理页用密码框填写；每个服务商可配多个模型（`models` JSON 列表，首项为 `default_model`）。未配置 API Key 时 LLM 客户端自动回退 **Mock 模式**（`llm.mock_mode: auto`）。
 
-- 生效提供商的唯一事实来源为数据库 `model_providers` 的 `is_active` 记录：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均优先读取该记录；数据库不可用时回退静态 `config.active_provider`（`db_service.get_active_provider()` 统一封装，DB 故障返回 `None` 由调用方降级）。
-- 启动环境自检（`app/utils/environment.py` 的 `run_startup_checks`）在 FastAPI 启动时执行一次，结果存入 `app.state.environment_checks` 并映射到 `/health` 的 `environment` 字段；任一项不通过仅 `logger.warning`、不阻断启动。`environment` 含四项：`ffmpeg`（探测 ffmpeg/ffprobe，ok/fail）、`database`（按 `config.database.url` 建连并执行 `SELECT 1` ping，ok/fail）、`provider`（优先 DB `is_active` 记录，关键字段缺失/无法解析判 fail，无 API Key 且 `mock_mode=auto` 判 warn、否则 fail）、`data_dir`（目录可创建且可写，ok/fail）。各 `detail` 不回显凭据：数据库连接串 `@` 前部分（用户名/密码）已剥离，API Key 仅以布尔 `api_key_set` 暴露。
+- 激活服务商与选定模型不再存于 provider 行内，而是由 `system_config` 配置 KV 表覆盖：`ai.provider`（直选生效服务商，值可为某服务商名或 `custom`）、`ai.model`（覆盖所选服务商的默认模型，空=跟随默认）；另含 `ai.api_key`/`ai.base_url` 供 `custom` 独立配置。配置 KV 子系统由 `app/config_registry.py`（最小注册表）+ `app/services/config_service.py`（`get_ai_config`/`mask_secret`/配置覆盖）封装。
+- 生效服务商的唯一事实来源为配置 KV `ai.provider`：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均经 `config_service.get_ai_config(config)` 解析——命中启用服务商则引用其 `api_key`/`base_url`、`model` 取 `ai.model` 覆盖或 `default_model`，否则回落静态 `config.active_provider`（DB 故障返回 `None` 由调用方降级，继续回落静态配置）。原 `db_service.get_active_provider()` 已移除。
+- 启动环境自检（`app/utils/environment.py` 的 `run_startup_checks`）在 FastAPI 启动时执行一次，结果存入 `app.state.environment_checks` 并映射到 `/health` 的 `environment` 字段；任一项不通过仅 `logger.warning`、不阻断启动。`environment` 含四项：`ffmpeg`（探测 ffmpeg/ffprobe，ok/fail）、`database`（按 `config.database.url` 建连并执行 `SELECT 1` ping，ok/fail）、`provider`（优先 DB `ai.provider` 配置引用，关键字段缺失/无法解析判 fail，无 API Key 且 `mock_mode=auto` 判 warn、否则 fail）、`data_dir`（目录可创建且可写，ok/fail）。各 `detail` 不回显凭据：数据库连接串 `@` 前部分（用户名/密码）已剥离，API Key 仅以布尔 `api_key_set` 暴露。
 
 ## 编码约定
 

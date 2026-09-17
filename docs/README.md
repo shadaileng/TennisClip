@@ -13,7 +13,10 @@ docs/
 ├── plans/                    # 方案类（📋待执行 → 🚧进行中 → 🏁已完成）
 │   ├── 01-需求分析与落地方案.md
 │   ├── 02-后端loguru日志TDD方案.md
-│   └── 03-测试环境隔离方案.md
+│   ├── 03-测试环境隔离方案.md
+│   ├── 04-前端模型选择功能.md
+│   ├── 05-模型提供商多模型管理.md
+│   └── 06-服务商管理对齐TennisDiary.md
 ├── architecture/             # 架构类（持续维护）
 │   └── index.md              # 架构总览（含任务处理流程）
 ├── references/               # 参考类（随代码更新）
@@ -28,6 +31,9 @@ docs/
 | 01 | [需求分析与落地方案](plans/01-需求分析与落地方案.md) | v1.0.0 | 方案 | plans/ | 🚧 进行中 | 完整需求分析、技术选型、全链路、风险管控、验收标准、迭代规划 |
 | 02 | [后端 loguru 日志 TDD 方案](plans/02-后端loguru日志TDD方案.md) | v1.0.0 | 方案 | plans/ | 📋 待执行 | 后端接入 loguru：双 sink、统一格式、uvicorn 拦截、TDD 测试用例 |
 | 03 | [测试环境隔离方案](plans/03-测试环境隔离方案.md) | v1.0.0 | 方案 | plans/ | 📋 待执行 | 引入 `.env.test` 与 `data_test` 隔离测试配置/数据，仅提交 `.env.test.example` |
+| 04 | [前端模型选择功能](plans/04-前端模型选择功能.md) | v1.0.0 | 方案 | plans/ | 🏁 已完成 | 前端新增模型（提供商）选择控件，运行时切换生效模型，复用后端 providers 接口 |
+| 05 | [模型提供商多模型管理](plans/05-模型提供商多模型管理.md) | v1.0.0 | 方案 | plans/ | 🏁 已完成 | 每商多模型 + 直存密钥：后端 CRUD/选模型接口（Alembic 迁移）、前端双下拉与管理弹窗 |
+| 06 | [服务商管理对齐 TennisDiary](plans/06-服务商管理对齐TennisDiary.md) | v1.0.0 | 方案 | plans/ | 🏁 已完成 | 配置 KV 驱动激活/选模型、ai_providers 表重构、校验模型探测、id 路由、前端管理弹窗 |
 | 00 | [架构总览（任务处理流程）](architecture/index.md) | v1.0.0 | 架构 | architecture/ | 🚧 进行中 | 上传→创建任务→后台异步→轮询→异常终态的错误传播机制 |
 
 ## 文档类型说明
@@ -46,6 +52,9 @@ docs/
 | 01-需求分析与落地方案 | 后端脚手架 + 前端界面已完成 | 后端 Mock 全链路跑通，前端 Vue3 完整；待接入真实 Step 3.7 Flash API |
 | 02-后端 loguru 日志 TDD 方案 | 🏁 已完成 | 测试先行（TC-01~TC-06），再实现 logger.py 双 sink 与 uvicorn 拦截 |
 | 03-测试环境隔离方案 | 📋 待执行 | 引入 `.env.test` + `data_test`，测试配置/数据与开发/生产彻底隔离 |
+| 04-前端模型选择功能 | 🏁 已完成 | 前端新增模型选择下拉，复用 `/api/v1/db/providers` 与 activate 接口 |
+| 05-模型提供商多模型管理 | 🏁 已完成 | 每商多模型 + 直存密钥，后端 CRUD/选模型 + 前端双下拉/管理弹窗 |
+| 06-服务商管理对齐TennisDiary | 🏁 已完成 | 后端 TDD 先行：config KV + ai_providers 重构 + check-models + id 路由 + 前端弹窗 |
 
 ## 约定速查
 

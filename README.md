@@ -110,9 +110,9 @@ llm:
       model: step3.7-flash
 ```
 
-> 该结构已落地到数据库：`model_providers` 表（由 config.yaml 的 providers 种子导入），
-> 支持运行时动态切换（`POST /api/v1/db/providers/{name}/activate`），
-> 调用方接口 `AppConfig.active_provider` 保持不变，后期可完全由数据库驱动。
+> 该结构已落地到数据库：`ai_providers` 表（纯凭据目录，由 config.yaml 的 providers 种子导入），
+> 激活服务商（`ai.provider`）与选定模型（`ai.model`）改由 `system_config` 配置 KV 覆盖，
+> 运行时经 `config_service.get_ai_config()` 解析，数据库不可用时回落静态 `config.active_provider`。
 
 未配置 API Key 时，LLM 客户端自动回退到 **Mock 模式**（返回示例结构化结果），便于无网环境联调。
 
@@ -140,7 +140,8 @@ database:
 | `task_inputs` | 输入记录（视频路径/大小/时长/分辨率/帧率） |
 | `task_outputs` | 输出记录（集锦/报告文件路径/大小） |
 | `task_results` | 结果快照（高光 JSON、报告 JSON 全文） |
-| `model_providers` | 模型提供商配置（运行时可动态切换） |
+| `ai_providers` | 模型服务商凭据目录（运行时可动态切换） |
+| `system_config` | 配置 KV（ai.provider / ai.model 等覆盖） |
 | `files` | 文件管理（处理涉及文件的状态跟踪） |
 
 ### 数据库迁移（Alembic）
@@ -240,8 +241,11 @@ uv run python -m app.cli --batch data/sample_videos
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |
-| GET | `/api/v1/db/providers` | 模型提供商列表（数据库） |
-| POST | `/api/v1/db/providers/{name}/activate` | 切换当前生效的模型提供商 |
+| GET | `/api/v1/db/providers` | 模型服务商列表（数据库；含 is_selected） |
+| POST | `/api/v1/db/providers/check-models` | 校验模型可用性（list / probe） |
+| GET | `/api/v1/config` | 配置 KV 列表（ai.provider / ai.model 等） |
+| PUT | `/api/v1/config/{key}` | 设置配置覆盖（切换服务商 / 覆盖模型） |
+| DELETE | `/api/v1/config/{key}` | 删除配置覆盖（恢复默认） |
 
 ## 配置说明（backend/config.yaml）
 

@@ -4,6 +4,16 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.7.0] - 2026-09-17
+
+### Added
+
+- 模型服务商管理对齐 TennisDiary：激活服务商（`ai.provider`）与选定模型（`ai.model`）改由 `system_config` 配置 KV 覆盖，`get_ai_config` 统一解析；`model_providers` 重构为 `ai_providers`（id 主键、enabled 用 int、去除 is_active/selected_model）
+- 新增 `check-models` 模型可用性校验接口（GET /models 清单优先，否则逐模型 chat/completions 探测），前端弹窗逐模型显示 ✓/✗
+- 服务商增删改路由改按整数 id；删除被 `ai.provider` 直选引用的服务商返回 409；API Key 掩码改为前 3 + 末 4 位
+- 新增 `/api/v1/config` 配置端点（列表/覆盖/恢复），`/health`、LLM 调用、启动自检均经配置解析，DB 不可用时回落静态配置
+- 前端服务商管理弹窗（表格 + 内联多模型表单 + 逐模型校验）与上传面板配置直选下拉
+
 ## [0.6.0] - 2026-09-16
 
 ### Added
