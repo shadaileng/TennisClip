@@ -33,6 +33,7 @@ export default defineConfig({
             { text: '03：测试环境隔离方案', link: '/plans/03-测试环境隔离方案' },
             { text: '04：模型服务商管理', link: '/plans/04-模型服务商管理' },
             { text: '05：高光候选定位方案', link: '/plans/05-高光候选定位方案' },
+            { text: '06：两步上传与 MD5 秒传', link: '/plans/06-两步上传与MD5秒传' },
           ],
         },
       ],
