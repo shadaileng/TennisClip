@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +22,8 @@ from app.models import TaskResult, TaskStatus
 from app.utils.logger import get_logger, setup_logging
 from app.utils.tasks import TaskQueue
 from app.core import run_pipeline
-from app.services import db_service
+from app.routers import upload as upload_router
+from app.services import db_service, upload_service
 
 # 尽早接管日志（含 uvicorn 内置日志），保证启动期日志统一格式输出
 setup_logging()
@@ -30,6 +31,11 @@ logger = get_logger(__name__)
 
 config = load_config()
 app = FastAPI(title="TennisClip AI", version="0.1.0")
+# 供路由层（如 upload 路由）取全局 config，避免与 main 循环依赖
+app.state.config = config
+
+# 上传路由（两步上传 + MD5 秒传 + 分片续传）
+app.include_router(upload_router.router)
 
 # CORS（前后端分开部署时放行跨域；同源部署下无副作用）
 # allowed_origins 来自 config.cors（config.yaml 的 cors.allowed_origins，
@@ -43,8 +49,6 @@ app.add_middleware(
 )
 
 queue = TaskQueue(config)
-_upload_dir = config.output_path / "uploads"
-_upload_dir.mkdir(parents=True, exist_ok=True)
 
 # 初始化数据库（多兼容：SQLite/Postgres/MySQL，按 config.database.url）
 db_service.init_db(config)
@@ -126,17 +130,46 @@ def _process_one(
 
 
 @app.post("/api/v1/process")
-async def process_video(file: UploadFile, level: str = "intermediate") -> dict:
-    """上传视频，异步提交处理任务。"""
-    task_id = uuid.uuid4().hex[:12]
-    suffix = Path(file.filename or "video.mp4").suffix or ".mp4"
-    dest = _upload_dir / f"{task_id}{suffix}"
-    data = await file.read()
-    dest.write_bytes(data)
-    # 落库：上传文件记录
-    db_service.record_task_output(task_id, "uploaded", str(dest), len(data) / (1024 * 1024))
+async def process_video(
+    file: UploadFile | None = None,
+    md5: str | None = Form(None),
+    level: str = Form("intermediate"),
+) -> dict:
+    """提交处理任务。
 
-    queue.submit(lambda r: _process_one(dest, task_id, level, result=r), task_id=task_id)
+    两种来源：
+    - md5：两步上传命中/完成后，前端以已落盘视频的 md5 提交（秒传复用已上传文件）。
+    - file：兼容旧的整体直传（仍按 MD5 去重落盘，便于后续秒传）。
+    二者皆无则 400。
+    """
+    task_id = uuid.uuid4().hex[:12]
+
+    if md5:
+        with db_service.session() as s:
+            rec = upload_service.find_by_md5(s, md5)
+            if rec is None or not upload_service.exists_physically(config, rec):
+                raise HTTPException(status_code=400, detail="md5 对应的视频不存在，请重新上传")
+            video_path = config.data_path / rec.rel_path
+            size_mb = rec.size_bytes / (1024 * 1024)
+    elif file is not None:
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="上传文件为空，请重新选择视频")
+        suffix = Path(file.filename or "video.mp4").suffix or ".mp4"
+        with db_service.session() as s:
+            rec, _ = upload_service.register_file(
+                s, config, data, ext=suffix, original_name=file.filename or ""
+            )
+            s.commit()
+            video_path = config.data_path / rec.rel_path
+            size_mb = rec.size_bytes / (1024 * 1024)
+    else:
+        raise HTTPException(status_code=400, detail="缺少 file 或 md5 参数")
+
+    # 落库：上传文件记录
+    db_service.record_task_output(task_id, "uploaded", str(video_path), size_mb)
+
+    queue.submit(lambda r: _process_one(video_path, task_id, level, result=r), task_id=task_id)
     return {"task_id": task_id, "status": TaskStatus.PENDING.value}
 
 

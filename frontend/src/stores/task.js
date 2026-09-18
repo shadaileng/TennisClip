@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { api } from '../lib/api'
+import { readChunks, CHUNK_SIZE } from '../utils/md5'
 
 // 后端任务状态（TaskStatus 枚举值）
 export const TERMINAL_STATES = ['succeeded', 'failed', 'timeout']
@@ -10,6 +11,11 @@ export const useTaskStore = defineStore('task', {
     health: null,    // /health 结果
     loading: false,
     error: null,
+    // 两步上传状态机：idle | hashing | instant | uploading | processing
+    uploadPhase: 'idle',
+    uploadProgress: 0,      // 0~1（哈希 + 上传整体进度）
+    uploadedChunks: 0,
+    totalChunks: 0,
     _timer: null,
     _failCount: 0,   // 连续轮询失败（5xx）计数
     providers: [],   // 模型服务商列表（含 is_selected）
@@ -195,26 +201,87 @@ export const useTaskStore = defineStore('task', {
       this.error = null
       this.loading = true
       this._failCount = 0
+      this.uploadPhase = 'hashing'
+      this.uploadProgress = 0
+      this.uploadedChunks = 0
+      this.totalChunks = 0
       try {
-        const res = await api.upload(file, level)
-        this.current = {
-          task_id: res.task_id,
-          status: res.status,
-          stage: 'pending',
-          source_video: file.name,
-          level,
-          highlight: null,
-          report: null,
-          highlight_video_path: null,
-          report_path: null,
-          error: null,
-          elapsed_seconds: 0,
+        // 1) 增量计算 MD5 + 读取分片（进度占整体 0~30%）
+        const { md5, size, total, parts } = await readChunks(file, CHUNK_SIZE, (p) => {
+          this.uploadProgress = p * 0.3
+        })
+        this.totalChunks = total
+        this.uploadedChunks = 0
+
+        // 2) MD5 预检：命中即跳过上传（秒传），直接复用已落盘视频重新分析
+        const check = await api.checkUpload(md5, size)
+        if (check.hit) {
+          this.uploadPhase = 'instant'
+          this.uploadProgress = 1
+          const res = await api.processByMd5(md5, level)
+          this._beginTask(res, file.name, level, md5, true)
+          return
         }
-        this._startPolling()
+
+        // 3) 未命中：分片上传（断点续传，先查已上传分片）
+        this.uploadPhase = 'uploading'
+        let progress = { ok: [], missing: parts.map((p) => p.index) }
+        try {
+          progress = await api.listChunks(md5)
+        } catch {
+          progress = { ok: [], missing: parts.map((p) => p.index) }
+        }
+        const done = new Set(progress.ok || [])
+        let uploaded = done.size
+        this.uploadedChunks = uploaded
+        for (const part of parts) {
+          if (done.has(part.index)) continue // 已存在分片跳过
+          await api.uploadChunk({
+            md5,
+            index: part.index,
+            total,
+            sizeBytes: size,
+            originalName: file.name,
+            crc32: part.crc32,
+            blob: part.blob,
+          })
+          uploaded += 1
+          this.uploadedChunks = uploaded
+          this.uploadProgress = 0.3 + 0.7 * (uploaded / total)
+        }
+
+        // 4) 合并校验 + 登记
+        await api.completeUpload(md5, size)
+        this.uploadProgress = 1
+
+        // 5) 进入分析
+        const res = await api.processByMd5(md5, level)
+        this._beginTask(res, file.name, level, md5, false)
       } catch (e) {
         this.error = e.message
         this.loading = false
+        this.uploadPhase = 'idle'
       }
+    },
+
+    _beginTask(res, fileName, level, md5, instant) {
+      this.uploadPhase = 'processing'
+      this.current = {
+        task_id: res.task_id,
+        status: res.status,
+        stage: 'pending',
+        source_video: fileName,
+        level,
+        md5,
+        instant,
+        highlight: null,
+        report: null,
+        highlight_video_path: null,
+        report_path: null,
+        error: null,
+        elapsed_seconds: 0,
+      }
+      this._startPolling()
     },
 
     _startPolling() {
@@ -276,6 +343,10 @@ export const useTaskStore = defineStore('task', {
       this.current = null
       this.error = null
       this.loading = false
+      this.uploadPhase = 'idle'
+      this.uploadProgress = 0
+      this.uploadedChunks = 0
+      this.totalChunks = 0
     },
   },
 })

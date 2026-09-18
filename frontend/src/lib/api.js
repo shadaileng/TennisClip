@@ -58,6 +58,63 @@ export const api = {
     return parse(res)
   },
 
+  // ---- 两步上传 + MD5 秒传 ----
+
+  // 第一步：MD5 预检，命中即跳过上传（秒传）
+  async checkUpload(md5, sizeBytes = 0) {
+    const res = await fetch(url('/api/v1/upload/check'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ md5, size_bytes: sizeBytes }),
+    })
+    return parse(res)
+  },
+
+  // 第二步（未命中）：上传单个分片（multipart，带 crc32 校验）
+  async uploadChunk({ md5, index, total, sizeBytes, originalName, crc32, blob }) {
+    const form = new FormData()
+    form.append('md5', md5)
+    form.append('index', String(index))
+    if (total) form.append('total', String(total))
+    if (sizeBytes) form.append('size_bytes', String(sizeBytes))
+    if (originalName) form.append('original_name', originalName)
+    if (crc32) form.append('crc32', crc32)
+    form.append('file', blob, `chunk-${index}`)
+    const res = await fetch(url('/api/v1/upload/chunk'), {
+      method: 'POST',
+      body: form,
+    })
+    return parse(res)
+  },
+
+  // 查询分片进度（断点续传依据）：ok / failed / missing
+  async listChunks(md5) {
+    const res = await fetch(url(`/api/v1/upload/chunks?md5=${encodeURIComponent(md5)}`))
+    return parse(res)
+  },
+
+  // 分片上传完成：合并校验 + 登记，返回 { md5, rel_path, ext, original_name }
+  async completeUpload(md5, sizeBytes = 0) {
+    const res = await fetch(url('/api/v1/upload/complete'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ md5, size_bytes: sizeBytes }),
+    })
+    return parse(res)
+  },
+
+  // 提交处理任务：以已落盘视频的 md5 引用（秒传复用 / 分片完成后）
+  async processByMd5(md5, level = 'intermediate') {
+    const form = new FormData()
+    form.append('md5', md5)
+    form.append('level', level)
+    const res = await fetch(url('/api/v1/process'), {
+      method: 'POST',
+      body: form,
+    })
+    return parse(res)
+  },
+
   async getTask(taskId) {
     const res = await fetch(url(`/api/v1/tasks/${encodeURIComponent(taskId)}`))
     return parse(res)

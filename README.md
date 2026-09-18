@@ -236,7 +236,11 @@ uv run python -m app.cli --batch data/sample_videos
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 健康检查（返回当前 provider/model/database） |
-| POST | `/api/v1/process` | 上传视频，异步提交处理任务，返回 `task_id` |
+| POST | `/api/v1/process` | 异步提交处理任务，返回 `task_id`；支持 `file` 整体直传或 `md5` 引用已上传视频（秒传复用） |
+| POST | `/api/v1/upload/check` | 两步上传第一步：MD5 预检，命中跳过上传（秒传），未命中返回分片策略与进度 |
+| POST | `/api/v1/upload/chunk` | 上传单个视频分片（crc32 校验 + 定位写），支持断点续传 |
+| GET | `/api/v1/upload/chunks` | 查询分片进度（ok/failed/missing），断点续传依据 |
+| POST | `/api/v1/upload/complete` | 分片合并校验（整文件 MD5/size）并登记，返回 `{md5, rel_path, ext}` |
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |

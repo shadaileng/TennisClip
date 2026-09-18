@@ -84,7 +84,11 @@ TennisClip/
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 健康检查（返回嵌套 `provider` 对象 { name / model / base_url / api_key_set / source }，`source` 标识生效来源 `database` 或 `config`；`environment` 字段暴露启动四项自检明细：ffmpeg / database / provider / data_dir，status 为 ok/warn/fail） |
-| POST | `/api/v1/process` | 上传视频，异步提交处理任务，返回 `task_id` |
+| POST | `/api/v1/process` | 异步提交处理任务，返回 `task_id`；支持 `file` 整体直传（按 MD5 去重落盘）或 `md5` 引用已上传视频（**秒传**：复用已落盘文件重新分析） |
+| POST | `/api/v1/upload/check` | 两步上传第一步：MD5 预检（`{md5, size_bytes}`），命中返回 `{hit:true}`（跳过上传），未命中返回分片策略与已有会话进度（断点续传） |
+| POST | `/api/v1/upload/chunk` | 上传单个分片（multipart：`md5/index/total/size_bytes/original_name/crc32/file`），片级 crc32 校验 + 定位写 `data.bin`，返回进度摘要 `{ok,failed,missing,total,total_size,chunk_size}` |
+| GET | `/api/v1/upload/chunks` | 查询分片进度（`ok/failed/missing`），断点续传依据 |
+| POST | `/api/v1/upload/complete` | 分片合并校验（整文件 MD5/size 二次校验防篡改），迁入 `{md5}{ext}` 并落 `uploaded_videos` 表，返回 `{md5, rel_path, ext, original_name}` |
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |

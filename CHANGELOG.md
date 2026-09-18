@@ -4,6 +4,15 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.8.0] - 2026-09-18
+
+### Added
+
+- 视频上传实现「两步上传 + MD5 秒传」：前端增量计算文件 MD5 后先预检，命中则跳过上传、复用已落盘视频重新分析；未命中走 5MB 分片上传 + 断点续传（单片 crc32 校验、整文件 MD5/size 二次校验），按 `{md5}{ext}` 去重落盘
+- 新增上传接口 `POST /api/v1/upload/check`（MD5 预检）、`POST /api/v1/upload/chunk`（分片）、`GET /api/v1/upload/chunks`（进度）、`POST /api/v1/upload/complete`（合并登记）
+- `POST /api/v1/process` 新增可选 `md5` 字段：引用已上传视频实现秒传复用；保留原 `file` 整体直传兜底
+- 新增 `uploaded_videos` 表（MD5 主键去重目录），配套 Alembic 迁移；前端 `UploadPanel` 展示「秒传命中 / 上传进度 / 分析中」状态
+
 ## [0.7.0] - 2026-09-17
 
 ### Added

@@ -37,6 +37,10 @@ const switchingProvider = computed(() => store.switchingProvider)
 const loadingProviders = computed(() => store.loadingProviders)
 const providerError = computed(() => store.providerError)
 
+// 两步上传阶段反馈
+const uploadPhase = computed(() => store.uploadPhase)
+const uploadPercent = computed(() => Math.round((store.uploadProgress || 0) * 100))
+
 function onFiles(e) {
   const f = e.target.files?.[0] || e.dataTransfer?.files?.[0]
   if (f) file.value = f
@@ -131,6 +135,32 @@ function submit() {
       <p class="mt-1 text-xs text-slate-500">支持 mp4 / mov / mkv / avi，1–5 分钟</p>
     </div>
 
+    <!-- 两步上传阶段反馈 -->
+    <div
+      v-if="uploadPhase === 'instant'"
+      class="mt-4 flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300"
+    >
+      <span class="text-lg">⚡</span>
+      <span>秒传命中，直接开始分析（已跳过上传）</span>
+    </div>
+    <div
+      v-else-if="uploadPhase === 'hashing' || uploadPhase === 'uploading'"
+      class="mt-4 rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-3 text-sm text-slate-300"
+    >
+      <div class="mb-2 flex items-center justify-between">
+        <span>
+          {{ uploadPhase === 'hashing' ? '计算文件指纹（MD5）…' : `分片上传中 ${store.uploadedChunks}/${store.totalChunks}` }}
+        </span>
+        <span :class="uploadPhase === 'uploading' ? 'text-emerald-400' : 'text-slate-500'">{{ uploadPercent }}%</span>
+      </div>
+      <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
+        <div
+          class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-[width] duration-200"
+          :style="{ width: uploadPercent + '%' }"
+        ></div>
+      </div>
+    </div>
+
     <button
       type="button"
       :disabled="!file || props.loading"
@@ -142,9 +172,14 @@ function submit() {
       ]"
       @click="submit"
     >
-      <template v-if="props.loading">处理中…</template>
+      <template v-if="props.loading">
+        <span v-if="uploadPhase === 'instant'">秒传并分析中…</span>
+        <span v-else-if="uploadPhase === 'hashing'">计算中…</span>
+        <span v-else-if="uploadPhase === 'uploading'">上传中…</span>
+        <span v-else>处理中…</span>
+      </template>
       <template v-else-if="hasTask">重新提交</template>
-      <template v-else>开始处理</template>
+      <template v-else>上传并分析</template>
     </button>
   </div>
 </template>

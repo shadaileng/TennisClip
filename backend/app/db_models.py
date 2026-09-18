@@ -198,6 +198,26 @@ class TaskResult(Base):
         return f"<TaskResult {self.task_id}>"
 
 
+class UploadedVideo(Base):
+    """已上传视频的去重目录：按 MD5 唯一标识（秒传依据）。
+
+    物理文件以 `{md5}{ext}` 落盘于 data/uploads/，同内容只存一份；
+    秒传预检以「库有记录 + 物理文件存在」双重判定，避免记录残留误判命中。
+    """
+
+    __tablename__ = "uploaded_videos"
+
+    md5: Mapped[str] = mapped_column(String(32), primary_key=True)  # 文件 MD5，命名与秒传依据
+    ext: Mapped[str] = mapped_column(String(16), default=".mp4")  # 后缀（含点）
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)  # 文件大小（字节）
+    original_name: Mapped[str] = mapped_column(String(255), default="")  # 原始文件名
+    rel_path: Mapped[str] = mapped_column(String(512), nullable=False)  # 相对 data_path 的路径
+    created_at: Mapped[float] = mapped_column(Float, default=0.0)  # 登记时间戳
+
+    def __repr__(self) -> str:
+        return f"<UploadedVideo {self.md5} {self.rel_path}>"
+
+
 class FileRecord(Base):
     """文件管理：所有处理涉及的文件状态跟踪。"""
 
