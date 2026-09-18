@@ -24,7 +24,10 @@ def edit_highlight_video(
     config: AppConfig,
 ) -> Path:
     """渲染 15 秒高光集锦，返回输出文件路径。"""
-    out = config.ensure_output_dir() / f"{source.stem}_highlight_{config.highlight.target_duration}s.mp4"
+    # 输出与源（预处理产物）同目录：源已在 outputs/{task_id}/ 下时即落入任务专属目录，
+    # 实现产物按 task_id 隔离；源不在输出目录下（极端降级路径）则回退到输出根目录。
+    out_dir = source.parent if str(source.parent).startswith(str(config.ensure_output_dir())) else config.ensure_output_dir()
+    out = out_dir / f"{source.stem}_highlight_{config.highlight.target_duration}s.mp4"
 
     if not ffmpeg.is_available():
         # 降级：复制源视频前 target_duration 秒作为占位，保证链路可跑通

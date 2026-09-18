@@ -29,6 +29,10 @@ def run_pipeline(
     started = time.monotonic()
     task_id = result.task_id
 
+    # 每任务独立输出目录：产物按 task_id 隔离，避免同内容（同 MD5）重复分析时互相覆盖
+    task_out = config.ensure_output_dir() / task_id
+    task_out.mkdir(parents=True, exist_ok=True)
+
     # 记录任务开始 + 输入
     db_service.record_task_start(task_id, str(video_path), level)
 
@@ -38,7 +42,7 @@ def run_pipeline(
         # 1. 预处理
         result.stage = "preprocessing"
         logger.info("pipeline: stage=preprocessing {}", video_path.name)
-        preprocessed = preprocess.preprocess(video_path, config)
+        preprocessed = preprocess.preprocess(video_path, config, work_dir=task_out)
         meta = preprocess.probe_video(preprocessed)
         duration = meta.get("duration") or 60.0
 
@@ -75,7 +79,7 @@ def run_pipeline(
         # 4. 技术分析报告（非致命：失败仅缺失报告，不丢弃已生成的高光视频）
         result.stage = "reporting"
         logger.info("pipeline: stage=reporting {}", video_path.name)
-        report_file = config.ensure_output_dir() / f"{video_path.stem}_report.json"
+        report_file = task_out / "report.json"
         try:
             result.report = report.generate_report(
                 preprocessed, hl, config, level=level, out_path=report_file
