@@ -205,6 +205,8 @@ export const useTaskStore = defineStore('task', {
       this.uploadProgress = 0
       this.uploadedChunks = 0
       this.totalChunks = 0
+      const originalName = file.name
+      const MAX_COMPLETE_RETRY = 3
       try {
         // 1) 增量计算 MD5 + 读取分片（进度占整体 0~30%）
         const { md5, size, total, parts } = await readChunks(file, CHUNK_SIZE, (p) => {
@@ -219,49 +221,90 @@ export const useTaskStore = defineStore('task', {
           this.uploadPhase = 'instant'
           this.uploadProgress = 1
           const res = await api.processByMd5(md5, level)
-          this._beginTask(res, file.name, level, md5, true)
+          this._beginTask(res, originalName, level, md5, true)
           return
         }
 
-        // 3) 未命中：分片上传（断点续传，先查已上传分片）
+        // 3) 未命中：先查已上传分片（断点续传），补齐缺失分片（单片失败自动重试）
         this.uploadPhase = 'uploading'
-        let progress = { ok: [], missing: parts.map((p) => p.index) }
-        try {
-          progress = await api.listChunks(md5)
-        } catch {
-          progress = { ok: [], missing: parts.map((p) => p.index) }
+        let progress = await this._safeListChunks(md5, parts)
+        let missing = new Set(
+          progress.missing && progress.missing.length
+            ? progress.missing
+            : parts.map((p) => p.index),
+        )
+        await this._uploadMissing(parts, md5, size, total, missing, originalName)
+
+        // 4) 合并校验 + 登记；整文件 MD5 不符(409) 时重传非法段后重试
+        let completeOk = false
+        for (let attempt = 0; attempt < MAX_COMPLETE_RETRY && !completeOk; attempt++) {
+          try {
+            await api.completeUpload(md5, size)
+            completeOk = true
+          } catch (e) {
+            if (e.status !== 409) throw e
+            // 服务端已清掉非法段：重新拉取缺失并重传（无缺失则整文件重传）
+            const prog = await this._safeListChunks(md5, parts)
+            const miss = prog.missing && prog.missing.length ? prog.missing : parts.map((p) => p.index)
+            await this._uploadMissing(parts, md5, size, total, new Set(miss), originalName)
+          }
         }
-        const done = new Set(progress.ok || [])
-        let uploaded = done.size
+        if (!completeOk) throw new Error('视频合并校验失败，请重试上传')
+
+        this.uploadProgress = 1
+
+        // 5) 进入分析
+        const res = await api.processByMd5(md5, level)
+        this._beginTask(res, originalName, level, md5, false)
+      } catch (e) {
+        this.error = (e && e.message) || String(e)
+        this.loading = false
+        this.uploadPhase = 'idle'
+      }
+    },
+
+    async _safeListChunks(md5, parts) {
+      try {
+        return await api.listChunks(md5)
+      } catch {
+        return { ok: [], missing: parts.map((p) => p.index) }
+      }
+    },
+
+    async _uploadMissing(parts, md5, size, total, missing, originalName) {
+      const byIndex = new Map(parts.map((p) => [p.index, p]))
+      let uploaded = parts.length - missing.size
+      this.uploadedChunks = uploaded
+      for (const idx of missing) {
+        const part = byIndex.get(idx)
+        if (!part) continue
+        await this._uploadChunkWithRetry(part, md5, size, total, originalName)
+        uploaded += 1
         this.uploadedChunks = uploaded
-        for (const part of parts) {
-          if (done.has(part.index)) continue // 已存在分片跳过
+        this.uploadProgress = 0.3 + 0.7 * (uploaded / parts.length)
+      }
+    },
+
+    async _uploadChunkWithRetry(part, md5, size, total, originalName, maxRetry = 3) {
+      let lastErr
+      for (let attempt = 0; attempt < maxRetry; attempt++) {
+        try {
           await api.uploadChunk({
             md5,
             index: part.index,
             total,
             sizeBytes: size,
-            originalName: file.name,
+            originalName,
             crc32: part.crc32,
             blob: part.blob,
           })
-          uploaded += 1
-          this.uploadedChunks = uploaded
-          this.uploadProgress = 0.3 + 0.7 * (uploaded / total)
+          return
+        } catch (e) {
+          // 单片校验(400 crc 不符)/网络抖动：重试该片（达上限后抛出）
+          lastErr = e
         }
-
-        // 4) 合并校验 + 登记
-        await api.completeUpload(md5, size)
-        this.uploadProgress = 1
-
-        // 5) 进入分析
-        const res = await api.processByMd5(md5, level)
-        this._beginTask(res, file.name, level, md5, false)
-      } catch (e) {
-        this.error = e.message
-        this.loading = false
-        this.uploadPhase = 'idle'
       }
+      throw lastErr || new Error(`分片 ${part.index} 上传失败`)
     },
 
     _beginTask(res, fileName, level, md5, instant) {
