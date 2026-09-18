@@ -74,9 +74,7 @@ def main() -> int:
 
         for video in videos:
             queue.submit(
-                lambda v=video: run_pipeline(
-                    v, config, TaskResult(task_id="batch", source_video=str(v)), level=args.level
-                )
+                lambda r, v=video: run_pipeline(v, config, r, level=args.level)
             )
         # 等待全部完成
         while not all(

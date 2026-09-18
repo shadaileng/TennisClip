@@ -3,7 +3,7 @@
 实现说明：
 - 使用 FFMPEG concat 协议拼接各片段，再统一缩放到目标时长；
 - 输出固定 target_duration 秒的 MP4（H.264 + AAC），可直接用于短视频发布；
-- 片段不足目标时长时按置信度降序重复补齐；片段超长时自动裁剪尾部。
+- 片段不足目标时长时按实际片段合成（不重复补齐）；片段超长时自动裁剪尾部。
 """
 
 from __future__ import annotations
@@ -13,6 +13,9 @@ from pathlib import Path
 from app.config import AppConfig
 from app.models import HighlightResult
 from app.utils import ffmpeg
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def edit_highlight_video(
@@ -27,28 +30,11 @@ def edit_highlight_video(
         # 降级：复制源视频前 target_duration 秒作为占位，保证链路可跑通
         raise RuntimeError("FFMPEG 不可用，无法渲染集锦。请安装 ffmpeg 后重试。")
 
-    work_dir = out.parent / f"{source.stem}_concat_list.txt"
-    durations = []
-    remaining = float(config.highlight.target_duration)
-
-    for seg in sorted(highlight.segments, key=lambda s: -s.confidence):
-        take = min(seg.end - seg.start, remaining)
-        if take <= 0:
-            continue
-        remaining -= take
-        durations.append(take)
-        if remaining <= 0:
-            break
-
-    if not durations:
-        # 无可用片段时退化为源视频前 15 秒
-        durations = [float(config.highlight.target_duration)]
-
-    # 逐段抽剪后用 concat 合并，控制时长更精确
+    # 逐段抽剪后用 concat 合并，控制时长更精确。
+    # 仅使用 LLM 返回的高光片段，不足目标时长时按实际片段合成（不重复补齐，避免造假循环）。
     seg_files = []
     remaining = float(config.highlight.target_duration)
     ordered = sorted(highlight.segments, key=lambda s: -s.confidence)
-    ordered += [s for s in ordered]  # 不足时允许重复补齐
     idx = 0
     for i in range(int(remaining * 3)):
         if remaining <= 0 or idx >= len(ordered):
@@ -66,6 +52,13 @@ def edit_highlight_video(
         seg_files.append(seg_path)
         remaining -= take
         idx += 1
+
+    selected = float(config.highlight.target_duration) - remaining
+    if selected < config.highlight.target_duration - 0.5:
+        logger.info(
+            "edit: 高光片段总时长 {:.1f}s 不足目标 {:.1f}s，按实际片段合成（不重复补齐）",
+            selected, config.highlight.target_duration,
+        )
 
     if not seg_files:
         seg_files = [source]

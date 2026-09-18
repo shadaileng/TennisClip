@@ -42,13 +42,20 @@ def generate_report(
     else:
         report = _fallback_report(highlight, level)
 
+    # 解析界面真实选中模型 + mock 判定（必须在落盘前赋值，保证 *_report.json 文件内容正确）
+    # 单次解析，避免重复查询 DB
+    model, is_mock = llm.resolve_effective(config)
+    model_label = model or "TennisClip AI"
+    mock_tag = " (mock)" if is_mock else ""
+    report.generated_by = f"TennisClip AI / {model_label}{mock_tag} (level={level})"
+    logger.info("report: generated_by={}", report.generated_by)
+
     report_path = out_path or (config.ensure_output_dir() / f"{video_path.stem}_report.json")
     report_path = Path(report_path)
     report_path.write_text(
         json.dumps(report.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     logger.info("report: saved to {}", report_path)
-    report.generated_by = f"TennisClip AI / Step 3.7 Flash (level={level})"
     return report
 
 
@@ -77,5 +84,5 @@ def _fallback_report(highlight: HighlightResult, level: str) -> TechnicalReport:
         strengths=["多拍相持稳定性较好"],
         weaknesses=["发球二发成功率偏低", "反手截击击球点偏低"],
         training_plan=["每周 2 次正手多球点前击训练", "每周 1 次发球轮抛球点练习"],
-        generated_by="TennisClip AI / template fallback",
+        generated_by="TennisClip AI / template fallback",  # generate_report 会按真实模型覆盖
     )

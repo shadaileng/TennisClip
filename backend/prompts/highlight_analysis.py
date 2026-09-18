@@ -24,14 +24,34 @@ _LEVEL_PROFILES = {
 }
 
 
-def build_highlight_prompt(level: str = "intermediate", duration_seconds: float | None = None) -> str:
-    """高光识别 + 双任务并行 Prompt。"""
+def build_highlight_prompt(
+    level: str = "intermediate",
+    duration_seconds: float | None = None,
+    candidates: list | None = None,
+) -> str:
+    """高光识别 + 双任务并行 Prompt。
+
+    candidates: 由 ffmpeg 信号定位的候选窗口（带真实时间戳），用于把 LLM 的"何时"
+    约束在信号锚定范围内，避免时间戳臆造。
+    """
     profile = _LEVEL_PROFILES.get(level, _LEVEL_PROFILES["intermediate"])
     dur_note = f"\n视频总时长约 {duration_seconds:.1f} 秒。" if duration_seconds else ""
+    cand_note = ""
+    if candidates:
+        cand_lines = "\n".join(
+            f"- 候选窗口 {i + 1}：[{c.start:.1f}s, {c.end:.1f}s]"
+            for i, c in enumerate(candidates)
+        )
+        cand_note = (
+            "\n已通过视频信号（场景切换 + 运动强度）定位以下候选高光窗口，时间戳为真实秒数：\n"
+            f"{cand_lines}\n"
+            "请仅在这些窗口内判断是否为高光（ace/rally/winner/smash），"
+            "并在对应窗口 ±2s 内精修起止时间戳；与候选窗口无关的片段请勿返回。"
+        )
     return f"""你是网球视频分析 Agent。请观看视频，完成以下任务：
 
 任务1（高光识别）：筛选 ACE 球、多拍相持、绝杀得分等高光回合，输出起止时间戳。
-{dur_note}{_COMPLEX_SCENE_RULES}
+{dur_note}{cand_note}{_COMPLEX_SCENE_RULES}
 任务2（动作初分析）：同步观察正反手击球、发球、截击、移动步伐与发力姿态。
 {profile}
 

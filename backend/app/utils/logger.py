@@ -40,7 +40,17 @@ _STDLIB_LOGGERS = ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi")
 
 
 def _resolve_level() -> str:
-    """级别解析：环境变量 > config.yaml > INFO。"""
+    """级别解析：环境变量 TENNISCLIP_LOG_LEVEL > config.yaml 的 logging.level > INFO。
+
+    注意：TENNISCLIP_LOG_LEVEL 通常写在 .env 中，而 .env 由 load_config() 内部的
+    load_dotenv 注入 os.environ。因此必须先调用 load_config() 将 .env 载入环境，
+    再读取环境变量；否则在 setup_logging() 早于 load_config() 的启动顺序下，
+    .env 里的 DEBUG 设置会被忽略（实测表现为 .env 不生效）。
+    """
+    try:
+        load_config()  # 触发 .env 加载（幂等，override=False），注入 os.environ
+    except Exception:  # noqa: BLE001
+        pass
     env = os.environ.get("TENNISCLIP_LOG_LEVEL")
     if env:
         return env.upper()

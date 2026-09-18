@@ -85,7 +85,7 @@ def test_task_queue_states():
     config = load_config()
     queue = TaskQueue(config)
 
-    def job() -> TaskResult:
+    def job(result) -> TaskResult:
         time.sleep(0.05)
         return TaskResult(task_id="q1", status=TaskStatus.SUCCEEDED)
 
@@ -94,6 +94,177 @@ def test_task_queue_states():
         time.sleep(0.01)
     assert queue.get(tid).status == TaskStatus.SUCCEEDED
     queue.shutdown()
+
+
+def _stub_llm(monkeypatch, model, mock):
+    """隔离网络/DB：stub 模型解析与 LLM 调用，仅验证 generated_by 文案逻辑。"""
+    from app.services import report as report_svc
+
+    monkeypatch.setattr(report_svc.llm, "complete_structured", lambda *a, **k: {
+        "summary": "stub", "strokes": [], "strengths": [],
+        "weaknesses": [], "training_plan": [],
+    })
+    monkeypatch.setattr(report_svc.llm, "resolve_effective", lambda c: (model, mock))
+
+
+def test_report_generated_by_reflects_model(tmp_path, monkeypatch):
+    """报告 generated_by 应反映界面真实选中模型，并在 mock 模式追加 (mock)；
+
+    且先于落盘赋值，确保磁盘 *_report.json 内容正确（修复先落盘后赋值的历史 bug）。
+    """
+    import json
+
+    from app.models import HighlightResult
+    from app.services import report as report_svc
+
+    _stub_llm(monkeypatch, "agnes-3.0-flash", True)
+
+    hl = HighlightResult(segments=[], scene_type="training")
+    out = tmp_path / "r_report.json"
+    rep = report_svc.generate_report(
+        video_path=tmp_path / "x.mp4",
+        highlight=hl,
+        config=load_config(),
+        level="intermediate",
+        out_path=out,
+    )
+    assert rep.generated_by == "TennisClip AI / agnes-3.0-flash (mock) (level=intermediate)"
+    on_disk = json.loads(out.read_text(encoding="utf-8"))
+    assert on_disk["generated_by"] == rep.generated_by
+
+
+def test_report_generated_by_real_no_mock(tmp_path, monkeypatch):
+    """真实调用（配了 API Key）时不应追加 (mock) 标注（回归：api_key 误判）。"""
+    import json
+
+    from app.models import HighlightResult
+    from app.services import report as report_svc
+
+    _stub_llm(monkeypatch, "agnes-2.5-flash", False)
+
+    hl = HighlightResult(segments=[], scene_type="training")
+    out = tmp_path / "r2_report.json"
+    rep = report_svc.generate_report(
+        video_path=tmp_path / "x.mp4",
+        highlight=hl,
+        config=load_config(),
+        level="intermediate",
+        out_path=out,
+    )
+    assert rep.generated_by == "TennisClip AI / agnes-2.5-flash (level=intermediate)"
+    assert "(mock)" not in rep.generated_by
+
+
+def test_find_highlights_training_uses_uniform_slices(tmp_path, monkeypatch):
+    """练习/训练类视频应改用均匀切片覆盖全程，而非仅裁开头（修复整段判为 other）。"""
+    from app.services import highlight as highlight_svc
+
+    # stub LLM：模拟模型把整段 120s 判为单个 other（典型训练场景）
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [{"start": 0.0, "end": 120.0, "label": "other", "confidence": 0.95}],
+            "scene_type": "training",
+            "reasoning": "静态练习",
+        },
+    )
+
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=120.0, level="intermediate",
+    )
+    # 应切成 max_segments(3) 段、均匀散布，而非单段
+    assert hl.scene_type == "training"
+    assert len(hl.segments) == 3
+    # 片段应覆盖全程（散布于 17.5/57.5/97.5 附近），而非都挤在开头
+    assert hl.segments[0].start > 10          # 证明不是“从 0 裁前 15s”
+    assert hl.segments[-1].end > 100          # 覆盖到视频后段
+    assert hl.segments[-1].start - hl.segments[0].start > 50  # 整体跨度大
+    for seg in hl.segments:
+        assert (seg.end - seg.start) >= 3
+
+
+def test_find_highlights_match_keeps_model_segments(tmp_path, monkeypatch):
+    """比赛类视频保留模型高光筛选结果，不强制均匀切片。"""
+    from app.services import highlight as highlight_svc
+
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [
+                {"start": 3.0, "end": 7.5, "label": "ace", "confidence": 0.95},
+                {"start": 40.0, "end": 45.0, "label": "winner", "confidence": 0.9},
+            ],
+            "scene_type": "match",
+            "reasoning": "比赛",
+        },
+    )
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=120.0, level="intermediate",
+    )
+    labels = {s.label for s in hl.segments}
+    assert labels == {"ace", "winner"}
+
+
+def test_find_highlights_degenerate_candidate_falls_back_to_uniform(tmp_path, monkeypatch):
+    """退化候选（单窗口覆盖整段，如单人练球全程连续运动）应回退均匀切片而非仅裁开头。"""
+    from app.services import highlight as highlight_svc
+    from app.models import Segment
+
+    # 信号把整段当成一个候选窗口（运动铺满全程）——无定位价值
+    monkeypatch.setattr(
+        highlight_svc.event_detect, "detect_candidates",
+        lambda *a, **k: [Segment(start=0.0, end=120.0, label="candidate", confidence=0.9)],
+    )
+    # 模型把整段判为单个 rally（典型训练场景）
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [{"start": 1.0, "end": 120.0, "label": "rally", "confidence": 0.5}],
+            "scene_type": "practice",
+            "reasoning": "全程练习",
+        },
+    )
+
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=120.0, level="intermediate",
+    )
+    assert hl.scene_type == "practice"
+    assert len(hl.segments) == 3
+    assert hl.segments[0].start > 10        # 不是从 0 裁前 15s
+    assert hl.segments[-1].end > 100        # 覆盖到视频后段
+    assert hl.segments[-1].start - hl.segments[0].start > 50
+
+
+def test_complete_structured_uses_configured_timeout_and_retries(monkeypatch):
+    """真实调用分支应按配置透传 timeout_seconds 与 max_retries 给 OpenAI 客户端。"""
+    from app.utils import llm as llm_mod
+    from types import SimpleNamespace
+
+    captured = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(
+                    content='{"segments":[],"scene_type":"unknown","reasoning":"x"}'))]
+            )
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.chat = SimpleNamespace(completions=_FakeCompletions())
+
+    monkeypatch.setattr(llm_mod, "OpenAI", _FakeClient)
+    cfg = load_config()
+    cfg.llm.mock_mode = "never"          # 强制走真实调用分支
+    cfg.llm.timeout_seconds = 123
+    cfg.llm.max_retries = 2
+    # 视频不存在时抽帧降级为空列表（纯文本），不触发真实 ffmpeg 产物
+    llm_mod.complete_structured(
+        Path("/nonexistent_x.mp4"), "ignore", cfg, schema_hint="HighlightResult",
+    )
+    assert captured["timeout"] == 123
+    assert captured["max_retries"] == 2
 
 
 def test_database_config_loaded():

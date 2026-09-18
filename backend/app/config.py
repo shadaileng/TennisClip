@@ -50,7 +50,9 @@ class LLMConfig:
     active_provider: str = "default"
     temperature: float = 0.2
     max_tokens: int = 4096
-    timeout_seconds: int = 60
+    max_frames: int = 16
+    timeout_seconds: int = 180
+    max_retries: int = 1
     mock_mode: str = "auto"
 
     def resolve(self) -> ProviderConfig:
@@ -85,6 +87,11 @@ class HighlightConfig:
     target_duration: int = 15
     max_segments: int = 3
     min_segment_seconds: int = 3
+    # —— 候选定位（ffmpeg 信号）——
+    scene_threshold: float = 0.4        # 场景切换判定阈值（ffmpeg scene filter）
+    motion_fps: int = 4                 # 运动强度抽帧率（fps）
+    motion_threshold: float = 0.05      # 运动活跃阈值（灰度帧差均值，0-255 尺度）
+    candidate_top_n: int = 5            # 候选窗口上限
 
 
 @dataclass

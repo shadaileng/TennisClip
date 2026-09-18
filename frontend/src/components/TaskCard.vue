@@ -19,6 +19,36 @@ const isTerminal = computed(() =>
 const showResults = computed(
   () => task.value?.status === 'succeeded' && (task.value.highlight || task.value.report)
 )
+
+// 处理阶段步骤条（与后端 run_pipeline 的 stage 对齐）
+const stages = [
+  { key: 'preprocessing', label: '预处理' },
+  { key: 'highlighting', label: '高光识别' },
+  { key: 'editing', label: '自动剪辑' },
+  { key: 'reporting', label: '报告生成' },
+]
+const currentStageIndex = computed(() =>
+  stages.findIndex((s) => s.key === task.value?.stage)
+)
+const allDone = computed(() => task.value?.status === 'succeeded')
+function isStageDone(i) {
+  if (allDone.value) return true
+  return currentStageIndex.value >= 0 && i < currentStageIndex.value
+}
+function isStageActive(i) {
+  if (allDone.value) return false
+  return i === currentStageIndex.value
+}
+function stageClass(i) {
+  if (isStageDone(i)) return 'bg-emerald-500 text-slate-950'
+  if (isStageActive(i)) return 'bg-emerald-500/20 text-emerald-300 ring-2 ring-emerald-500'
+  return 'bg-slate-800 text-slate-400'
+}
+function labelClass(i) {
+  if (isStageDone(i)) return 'text-emerald-300'
+  if (isStageActive(i)) return 'text-emerald-200'
+  return 'text-slate-500'
+}
 </script>
 
 <template>
@@ -45,13 +75,35 @@ const showResults = computed(
         <span class="text-xs text-slate-500">{{ task.source_video }}</span>
       </div>
 
-      <!-- 进度条（非终态） -->
+      <!-- 阶段步骤条（非终态，实时高亮当前阶段） -->
       <div v-if="!isTerminal" class="mb-4">
-        <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-          <div class="h-full w-1/3 animate-pulse rounded-full bg-emerald-500" />
-        </div>
+        <ol class="flex items-center">
+          <li
+            v-for="(s, i) in stages"
+            :key="s.key"
+            class="flex items-center"
+            :class="i === stages.length - 1 ? 'flex-none' : 'flex-1'"
+          >
+            <div class="flex flex-col items-center">
+              <span
+                class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold"
+                :class="stageClass(i)"
+              >
+                <template v-if="isStageDone(i)">✓</template>
+                <template v-else-if="isStageActive(i)"><span class="animate-pulse">●</span></template>
+                <template v-else>{{ i + 1 }}</template>
+              </span>
+              <span class="mt-1 whitespace-nowrap text-[11px]" :class="labelClass(i)">{{ s.label }}</span>
+            </div>
+            <span
+              v-if="i < stages.length - 1"
+              class="mx-1 h-0.5 flex-1 rounded"
+              :class="isStageDone(i) ? 'bg-emerald-500' : 'bg-slate-700'"
+            />
+          </li>
+        </ol>
         <p class="mt-2 text-xs text-slate-400">
-          正在处理：预处理 → 高光识别 → 自动剪辑 → 报告生成…
+          正在处理：{{ stages[currentStageIndex]?.label || '排队中' }}…
         </p>
       </div>
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -108,9 +109,15 @@ def health() -> dict:
     }
 
 
-def _process_one(video_path: Path, task_id: str, level: str = "intermediate") -> TaskResult:
+def _process_one(
+    video_path: Path,
+    task_id: str,
+    level: str = "intermediate",
+    result: Optional[TaskResult] = None,
+) -> TaskResult:
+    if result is None:
+        result = TaskResult(task_id=task_id, source_video=str(video_path))
     started = time.monotonic()
-    result = TaskResult(task_id=task_id, source_video=str(video_path))
     try:
         run_pipeline(video_path, config, result, level=level)
     finally:
@@ -129,7 +136,7 @@ async def process_video(file: UploadFile, level: str = "intermediate") -> dict:
     # 落库：上传文件记录
     db_service.record_task_output(task_id, "uploaded", str(dest), len(data) / (1024 * 1024))
 
-    queue.submit(lambda: _process_one(dest, task_id, level), task_id=task_id)
+    queue.submit(lambda r: _process_one(dest, task_id, level, result=r), task_id=task_id)
     return {"task_id": task_id, "status": TaskStatus.PENDING.value}
 
 

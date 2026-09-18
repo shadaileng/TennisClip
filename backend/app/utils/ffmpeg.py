@@ -23,22 +23,29 @@ def is_available() -> bool:
     return _available
 
 
-def run(cmd: list[str], timeout: int = 300) -> str:
-    """执行命令，失败时抛 RuntimeError。"""
+def run(cmd: list[str], timeout: int = 300, capture_stderr: bool = False, binary: bool = False) -> "str | bytes":
+    """执行命令，失败时抛 RuntimeError。
+
+    capture_stderr: 返回 stderr 而非 stdout（如 showinfo 元数据打印到 stderr）。
+    binary: 以二进制模式捕获（如 rawvideo 帧流），返回 bytes。
+    """
     if not is_available():
         raise RuntimeError("FFMPEG 未安装或不在 PATH 中")
     logger.debug("exec: {}", " ".join(cmd))
     proc = subprocess.run(
         cmd,
         capture_output=True,
-        text=True,
+        text=not binary,
         timeout=timeout,
         check=False,
     )
     if proc.returncode != 0:
-        tail = (proc.stderr or "")[-2000:]
+        err = proc.stderr if isinstance(proc.stderr, str) else (proc.stderr or b"").decode("utf-8", "replace")
+        tail = err[-2000:]
         raise RuntimeError(f"FFMPEG 失败 (exit={proc.returncode}): {tail}")
-    return proc.stdout
+    if binary:
+        return proc.stdout  # bytes
+    return proc.stderr if capture_stderr else proc.stdout
 
 
 def probe(path: Path) -> dict:

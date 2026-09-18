@@ -200,6 +200,7 @@ export const useTaskStore = defineStore('task', {
         this.current = {
           task_id: res.task_id,
           status: res.status,
+          stage: 'pending',
           source_video: file.name,
           level,
           highlight: null,

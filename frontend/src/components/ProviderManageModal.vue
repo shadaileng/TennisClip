@@ -158,7 +158,7 @@ function close() {
     @click.self="close"
   >
     <div
-      class="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80 shadow-2xl backdrop-blur"
+      class="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80 shadow-2xl backdrop-blur"
     >
       <!-- 头部 -->
       <div class="flex items-center justify-between border-b border-slate-800 px-5 py-4">
@@ -174,14 +174,16 @@ function close() {
         </button>
       </div>
 
-      <!-- 内容（可滚动） -->
-      <div class="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-        <p class="text-xs text-slate-500">
+      <!-- 内容（左右两栏：左=列表，右=表单） -->
+      <div class="flex-1 overflow-y-auto px-5 py-4">
+        <p class="mb-4 text-xs text-slate-500">
           手动维护 OpenAI 兼容服务商；被当前直选引用的不可删除。一个服务商可配置多个模型，密钥直接入库（接口以掩码返回）。
         </p>
 
-        <!-- 列表 -->
-        <div class="space-y-2">
+        <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <!-- 列表（左） -->
+          <div class="space-y-2">
+            <h4 class="text-sm font-medium text-slate-200">服务商列表</h4>
           <div
             v-for="p in providers"
             :key="p.id"
@@ -256,14 +258,14 @@ function close() {
           <p v-if="loading" class="text-xs text-slate-500">加载中…</p>
         </div>
 
-        <!-- 表单 -->
-        <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-4">
-          <div class="mb-3 flex items-center justify-between">
+        <!-- 表单（右） -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
             <h4 class="text-sm font-medium text-slate-200">
-              {{ editingId ? `编辑「${form.name}」` : '新增服务商' }}
+              {{ editingId ? `编辑服务商「${form.name}」` : '新增服务商' }}
             </h4>
             <button
-              v-if="!editingId"
+              v-if="editingId"
               type="button"
               class="rounded-lg border border-emerald-500/50 px-2.5 py-1 text-xs font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10"
               @click="startAdd"
@@ -271,7 +273,7 @@ function close() {
               + 新增服务商
             </button>
           </div>
-
+          <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-4">
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label class="flex flex-col gap-1 text-xs text-slate-400">
               名称
@@ -411,6 +413,8 @@ function close() {
               {{ saving ? '保存中…' : editingId ? '保存修改' : '新增服务商' }}
             </button>
           </div>
+        </div>
+        </div>
         </div>
       </div>
     </div>

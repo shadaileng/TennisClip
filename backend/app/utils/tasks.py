@@ -29,7 +29,7 @@ class TaskQueue:
         self._tasks: dict[str, TaskResult] = {}
         self._task_order: list[str] = []
 
-    def submit(self, job: Callable[[], TaskResult], task_id: Optional[str] = None) -> str:
+    def submit(self, job: Callable[["TaskResult"], TaskResult], task_id: Optional[str] = None) -> str:
         if task_id is None:
             task_id = uuid.uuid4().hex[:12]
         self._tasks[task_id] = TaskResult(task_id=task_id, status=TaskStatus.PENDING)
@@ -39,7 +39,9 @@ class TaskQueue:
             result.status = TaskStatus.PROCESSING
             start = time.monotonic()
             try:
-                out = job()
+                # 把队列中同一 result 对象传给 job，job 原地修改（如 run_pipeline 设 stage），
+                # 使轮询 get_task 能实时看到 stage/status 变化。
+                out = job(result)
                 elapsed = time.monotonic() - start
                 # 用 job 返回的真实结果（含 failed/error）替换存储对象，
                 # 不再无条件覆盖为 succeeded，保证异常原因能传回前端。

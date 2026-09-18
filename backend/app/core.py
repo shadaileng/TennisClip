@@ -36,6 +36,8 @@ def run_pipeline(
         logger.info("pipeline: start {} (level={})", video_path.name, level)
 
         # 1. 预处理
+        result.stage = "preprocessing"
+        logger.info("pipeline: stage=preprocessing {}", video_path.name)
         preprocessed = preprocess.preprocess(video_path, config)
         meta = preprocess.probe_video(preprocessed)
         duration = meta.get("duration") or 60.0
@@ -52,10 +54,14 @@ def run_pipeline(
         )
 
         # 2. 高光识别
+        result.stage = "highlighting"
+        logger.info("pipeline: stage=highlighting {}", video_path.name)
         hl = highlight_service.find_highlights(preprocessed, config, duration, level=level)
         result.highlight = hl
 
         # 3. 剪辑合成
+        result.stage = "editing"
+        logger.info("pipeline: stage=editing {}", video_path.name)
         hl_video = video_editor.edit_highlight_video(preprocessed, hl, config)
         result.highlight_video_path = str(hl_video)
 
@@ -66,23 +72,30 @@ def run_pipeline(
             target_duration=config.highlight.target_duration,
         )
 
-        # 4. 技术分析报告
+        # 4. 技术分析报告（非致命：失败仅缺失报告，不丢弃已生成的高光视频）
+        result.stage = "reporting"
+        logger.info("pipeline: stage=reporting {}", video_path.name)
         report_file = config.ensure_output_dir() / f"{video_path.stem}_report.json"
-        result.report = report.generate_report(
-            preprocessed, hl, config, level=level, out_path=report_file
-        )
-        result.report_path = str(report_file)
-
-        # 落库：输出 - 报告文件
-        if report_file.exists():
-            db_service.record_task_output(
-                task_id, "report", str(report_file),
-                report_file.stat().st_size / (1024 * 1024),
+        try:
+            result.report = report.generate_report(
+                preprocessed, hl, config, level=level, out_path=report_file
             )
+            result.report_path = str(report_file)
+            # 落库：输出 - 报告文件
+            if report_file.exists():
+                db_service.record_task_output(
+                    task_id, "report", str(report_file),
+                    report_file.stat().st_size / (1024 * 1024),
+                )
+        except Exception as exc:  # noqa: BLE001
+            result.report = None
+            result.report_path = None
+            result.report_error = str(exc)
+            logger.warning("pipeline: 报告生成失败（保留高光视频）: {}", exc)
 
         result.status = TaskStatus.SUCCEEDED
         result.elapsed_seconds = time.monotonic() - started
-        logger.info("pipeline: done in %.1fs", result.elapsed_seconds)
+        logger.info("pipeline: done in {:.1f}s", result.elapsed_seconds)
     except Exception as exc:  # noqa: BLE001
         result.status = TaskStatus.FAILED
         result.error = str(exc)
