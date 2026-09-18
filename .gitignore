@@ -37,3 +37,6 @@ docs/.vitepress/cache/
 
 # docs-manage skill：参考代码目录不纳入版本管理
 docs/reference/
+
+# codebuddy 自动生成的规划文件（工作区临时产物，不入库）
+.codebuddy/plans/
