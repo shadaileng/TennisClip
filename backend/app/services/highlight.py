@@ -32,21 +32,30 @@ def find_highlights(
 ) -> HighlightResult:
     """识别高光回合，返回结构化时间戳。
 
-    流程：ffmpeg 信号定位候选窗口 → 构造领域 Prompt（携带候选时间戳）
-         → 调用 LLM（自动 Mock 回退）段内精修 → 解析 JSON 并锚定到候选窗口。
-    候选窗口若退化为"覆盖几乎整段"（如单人练球全程连续运动，信号未能真正定位到
-    局部事件），视为无定位价值，回退到旧逻辑（全片带时间戳采样 + 均匀切片兜底），
-    避免整段被当成一个高光、最终只裁开头。
+    流程：ffmpeg 信号（音频击球为主 + 运动强度为辅，按 candidate_mode 可插拔）定位候选窗口
+         → 构造领域 Prompt（携带候选时间戳与准备段排除约束）
+         → 调用 LLM（自动 Mock 回退）段内精修 → 解析 JSON 并锚定到候选窗口
+         → 准备段后过滤（丢弃 other/低置信/与动作窗口不重叠的段）。
+    候选缺失（无信号）时回退均匀切片兜底，避免整段被当成一个高光、最终只裁开头。
+
+    level 驱动高光选择策略（config.highlight.resolve_selection）：beginner/intermediate/
+    professional 各对应不同 max_segments 上限；all（所有高光回合）遍历整段、不截断候选与
+    段数、置 all_highlights 标记，下游剪辑/报告据此全量拼接与分析。
     """
-    logger.info("highlight: start for {}", video_path.name)
+    logger.info("highlight: start for {} (level={})", video_path.name, level)
+    sel = config.highlight.resolve_selection(level)
+    all_highlights = sel["all_highlights"]
+    # all 档位遍历整段：候选不截断；其余沿用 candidate_top_n 默认上限
+    top_n = None if all_highlights else config.highlight.candidate_top_n
     candidates = (
-        event_detect.detect_candidates(video_path, config, float(duration_seconds))
+        event_detect.detect_candidates(video_path, config, float(duration_seconds), top_n=top_n)
         if duration_seconds else []
     )
     useful = bool(candidates) and not _candidates_degenerate(candidates, duration_seconds)
     prompt_cands = candidates if useful else []
     prompt = build_highlight_prompt(
-        level=level, duration_seconds=duration_seconds, candidates=prompt_cands
+        level=level, duration_seconds=duration_seconds, candidates=prompt_cands,
+        select_all=all_highlights,
     )
 
     result = llm.complete_structured(
@@ -59,18 +68,31 @@ def find_highlights(
     if result is None:
         raise RuntimeError("LLM 未返回结构化结果")
 
+    # LLM 偶会把 scene_type/reasoning 嵌套进每个 segment 而非顶层；统一提升到顶层并兜底
+    _lift_scene_fields(result)
     highlight = HighlightResult(**result)
     highlight.target_duration = config.highlight.target_duration
+    highlight.all_highlights = all_highlights
     if useful:
         # 锚定到候选窗口，避免 LLM 再次臆造时间戳
-        _clamp_to_candidates(highlight, candidates, config)
+        _clamp_to_candidates(highlight, candidates, config, max_segments=sel["max_segments"], cap=not all_highlights)
         if not highlight.segments:
             # LLM 未返回有效高光时，退化使用候选窗口本身（仍优于全片盲剪）
             highlight.segments = candidates
+        if all_highlights:
+            # 全量模式：补齐 LLM 漏返的候选窗口，确保遍历整段、截取所有高光时刻
+            _fill_missing_candidates(highlight, candidates, config)
+        # 准备段后过滤：丢弃 other/低置信/与候选动作窗口不重叠的段
+        _exclude_prep(highlight, config, candidates)
     else:
-        _clamp_segments(highlight, config, duration_seconds)
+        _clamp_segments(highlight, config, duration_seconds, max_segments=sel["max_segments"], cap=not all_highlights)
         _maybe_uniform_slices(highlight, config, duration_seconds)
-    logger.info("highlight: {} segments (scene_type={})", len(highlight.segments), highlight.scene_type)
+        # 准备段后过滤（无候选时仅按 label/置信度过滤）
+        _exclude_prep(highlight, config, [])
+    logger.info(
+        "highlight: {} segments (level={} all={})",
+        len(highlight.segments), level, all_highlights,
+    )
     return highlight
 
 
@@ -123,12 +145,23 @@ def _uniform_slices(duration: float, config: AppConfig) -> list[Segment]:
     return slices
 
 
-def _clamp_to_candidates(highlight: HighlightResult, candidates: list[Segment], config: AppConfig) -> None:
+def _clamp_to_candidates(
+    highlight: HighlightResult,
+    candidates: list[Segment],
+    config: AppConfig,
+    max_segments: Optional[int] = None,
+    cap: bool = True,
+) -> None:
     """将 LLM 返回段锚定到候选用窗口 ±_CANDIDATE_MARGIN 内，越界拉回。
 
     LLM 被要求"在候选窗口 ±2s 内精修"，此处为安全网：即使模型偏离，时间戳仍由
     信号锚定的候选窗口约束，避免再次出现"永远从 0 开始"的臆造时间戳。
+
+    max_segments：截断上限（默认 config.highlight.max_segments，支持 level 策略覆盖）；
+    cap=False 时跳过截断（all 档位全量保留，仅做时间戳合法化与排序）。
     """
+    if max_segments is None:
+        max_segments = config.highlight.max_segments
     spans = [(c.start, c.end) for c in candidates]
     kept = []
     for seg in highlight.segments:
@@ -144,16 +177,44 @@ def _clamp_to_candidates(highlight: HighlightResult, candidates: list[Segment], 
                 label=seg.label, confidence=seg.confidence,
             ))
     kept.sort(key=lambda x: x.start)
-    if len(kept) > config.highlight.max_segments:
-        kept = sorted(kept, key=lambda s: -s.confidence)[: config.highlight.max_segments]
+    if cap and len(kept) > max_segments:
+        kept = sorted(kept, key=lambda s: -s.confidence)[: max_segments]
         kept.sort(key=lambda x: x.start)
     highlight.segments = kept
 
 
-def _clamp_segments(highlight: HighlightResult, config: AppConfig, duration: Optional[float]) -> None:
-    """裁剪非法时间戳，保证在 [0, duration] 内且时长 >= min_segment_seconds。"""
+def _fill_missing_candidates(highlight: HighlightResult, candidates: list[Segment], config: AppConfig) -> None:
+    """all 档位兜底：把 LLM 未返回的候选窗口以候选本身补入，确保遍历整段截取所有高光。
+
+    仅补齐与现有段不重叠（±0.5s）的候选窗口，避免重复；标签记为 candidate。
+    """
+    kept_spans = [(s.start, s.end) for s in highlight.segments]
+    for c in candidates:
+        if _overlaps_any(c, kept_spans, margin=0.5):
+            continue
+        highlight.segments.append(Segment(
+            start=c.start, end=c.end,
+            label="candidate", confidence=c.confidence,
+        ))
+    highlight.segments.sort(key=lambda x: x.start)
+
+
+def _clamp_segments(
+    highlight: HighlightResult,
+    config: AppConfig,
+    duration: Optional[float],
+    max_segments: Optional[int] = None,
+    cap: bool = True,
+) -> None:
+    """裁剪非法时间戳，保证在 [0, duration] 内且时长 >= min_segment_seconds。
+
+    max_segments：截断上限（默认 config.highlight.max_segments，支持 level 策略覆盖）；
+    cap=False 时跳过截断（all 档位全量保留）。
+    """
     if not duration:
         return
+    if max_segments is None:
+        max_segments = config.highlight.max_segments
     kept = []
     for seg in highlight.segments:
         start = max(0.0, seg.start)
@@ -161,10 +222,67 @@ def _clamp_segments(highlight: HighlightResult, config: AppConfig, duration: Opt
         if end > start:
             kept.append(Segment(start=start, end=end, label=seg.label, confidence=seg.confidence))
     kept.sort(key=lambda s: s.start)
-    if len(kept) > config.highlight.max_segments:
-        kept = [max(kept, key=lambda s: s.confidence)] + kept[:-1][: config.highlight.max_segments - 1]
+    if cap and len(kept) > max_segments:
+        kept = [max(kept, key=lambda s: s.confidence)] + kept[:-1][: max_segments - 1]
         kept.sort(key=lambda s: s.start)
     highlight.segments = kept
+
+
+def _overlaps_any(seg: Segment, spans, margin: float = 0.0) -> bool:
+    """段是否与任一候选窗口重叠（允许 margin 外扩）。"""
+    for (s, e) in spans:
+        if seg.start <= e + margin and seg.end >= s - margin:
+            return True
+    return False
+
+
+def _exclude_prep(highlight: HighlightResult, config: AppConfig, candidates: list) -> None:
+    """准备段后过滤安全网：丢弃 other 标签、低置信度、以及与候选动作窗口不重叠的段。
+
+    保证 video_editor 拿到的 segments 不含捡球/走位/等待等准备段（单一真相源）。
+    """
+    if not config.highlight.prep_exclusion:
+        return
+    cfg = config.highlight
+    spans = [(c.start, c.end) for c in candidates]
+    kept = []
+    for seg in highlight.segments:
+        if seg.label == "other":
+            continue
+        if seg.confidence < cfg.min_segment_confidence:
+            continue
+        if spans and not _overlaps_any(seg, spans):
+            continue
+        kept.append(seg)
+    highlight.segments = kept
+
+
+def _lift_scene_fields(result: dict) -> None:
+    """LLM 偶会把 scene_type/reasoning 嵌套进每个 segment；提升到顶层并兜底推断。"""
+    segs = result.get("segments") or []
+    if not result.get("scene_type"):
+        seg_scene = next(
+            (s.get("scene_type") for s in segs if isinstance(s, dict) and s.get("scene_type")),
+            None,
+        )
+        result["scene_type"] = seg_scene or _infer_scene_type(segs)
+    if not result.get("reasoning"):
+        seg_reason = next(
+            (s.get("reasoning") for s in segs if isinstance(s, dict) and s.get("reasoning")),
+            None,
+        )
+        if seg_reason:
+            result["reasoning"] = seg_reason
+
+
+def _infer_scene_type(segments) -> str:
+    """按动作标签推断场景类型（ace/winner/smash→match；其余击球技术→practice）。"""
+    labels = {s.get("label") for s in segments if isinstance(s, dict)}
+    if labels & {"ace", "winner", "smash"}:
+        return "match"
+    if labels & {"rally", "forehand", "backhand", "serve", "volley"}:
+        return "practice"
+    return "unknown"
 
 
 def mock_highlights(duration_seconds: float, config: AppConfig, seed: Optional[int] = None) -> HighlightResult:

@@ -87,11 +87,45 @@ class HighlightConfig:
     target_duration: int = 15
     max_segments: int = 3
     min_segment_seconds: int = 3
-    # —— 候选定位（ffmpeg 信号）——
+    # —— 候选定位（ffmpeg 信号，可插拔）——
     scene_threshold: float = 0.4        # 场景切换判定阈值（ffmpeg scene filter）
     motion_fps: int = 4                 # 运动强度抽帧率（fps）
-    motion_threshold: float = 0.05      # 运动活跃阈值（灰度帧差均值，0-255 尺度）
+    motion_threshold: float = 0.05      # 运动活跃阈值（灰度帧差均值，0-255 尺度，兼作动作爆发下界）
     candidate_top_n: int = 5            # 候选窗口上限
+    # 可插拔信号管线：audio | motion | scene | audio_motion | auto
+    candidate_mode: str = "audio_motion"
+    # 音频击球检测（主信号）：ffmpeg 抽裸 PCM → 瞬态包络 → numpy 峰值检测击球瞬态
+    audio_enabled: bool = True          # 是否启用音频击球检测
+    audio_sample_rate: int = 16000      # 音频抽采样率
+    audio_hit_percentile: float = 95    # 瞬态包络自适应阈值分位（0-100）
+    hit_cluster_gap_seconds: float = 4.0  # 相邻击球聚为回合的间隔上限（秒）
+    hit_window_expand: float = 2.0     # 回合窗口两侧外扩（秒，含挥拍预备/随挥）
+    # 运动强度分位爆发（辅助/无声兜底）
+    motion_action_percentile: float = 80  # 运动分数分位阈值（0-100）
+    # 准备段后过滤（安全网）
+    prep_exclusion: bool = True         # 是否启用准备段后过滤
+    min_segment_confidence: float = 0.6  # 低于此置信度的段丢弃
+    # —— 分析分层 → 高光选择策略（level 驱动高光数量）——
+    # 每个 level 映射高光选择策略：max_segments 覆盖上限；all_highlights=True 表示
+    # 「所有高光回合」档位（遍历整段、截取全部高光时刻，不受 max_segments/target_duration 约束）。
+    level_strategies: dict = field(default_factory=lambda: {
+        "beginner": {"max_segments": 2},
+        "intermediate": {"max_segments": 3},
+        "professional": {"max_segments": 5},
+        "all": {"all_highlights": True},
+    })
+
+    def resolve_selection(self, level: str) -> dict:
+        """返回该 level 的高光选择策略：{max_segments, all_highlights}。
+
+        level 未命中映射时回退到配置默认（max_segments=配置值，all_highlights=False），
+        保证旧三档与未知 level 行为零回归。
+        """
+        strat = self.level_strategies.get(level, {}) or {}
+        return {
+            "max_segments": int(strat.get("max_segments", self.max_segments)),
+            "all_highlights": bool(strat.get("all_highlights", False)),
+        }
 
 
 @dataclass

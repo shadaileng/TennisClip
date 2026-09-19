@@ -351,3 +351,139 @@ def test_db_service_roundtrip():
         pass  # 文件仍被 SQLite 句柄占用，留待下次运行前清理
 
 
+def test_exclude_prep_drops_other_and_low_conf(tmp_path, monkeypatch):
+    """准备段后过滤应丢弃 other 标签、低置信度、以及与动作窗口不重叠的段。"""
+    from app.models import Segment
+    from app.services import highlight as highlight_svc
+
+    # 候选动作窗口仅在 [10,15]
+    cands = [Segment(start=10.0, end=15.0, label="candidate", confidence=0.9)]
+    monkeypatch.setattr(
+        highlight_svc.event_detect, "detect_candidates", lambda *a, **k: cands,
+    )
+    # 模型返回：落在动作窗口内的 ace（保留）、other（丢弃）、低置信且窗口外 rally（丢弃）
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [
+                {"start": 11.0, "end": 14.0, "label": "ace", "confidence": 0.95},
+                {"start": 2.0, "end": 4.0, "label": "other", "confidence": 0.9},
+                {"start": 25.0, "end": 28.0, "label": "rally", "confidence": 0.4},
+            ],
+            "scene_type": "match",
+            "reasoning": "x",
+        },
+    )
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=40.0, level="intermediate",
+    )
+    labels = {s.label for s in hl.segments}
+    assert labels == {"ace"}   # other 与低置信/不重叠段均被丢弃
+
+
+def test_scene_type_lifted_from_nested_segments(tmp_path, monkeypatch):
+    """LLM 偶把 scene_type 写进 segment 内部时，应提升到顶层而非落为 unknown。"""
+    from app.models import Segment
+    from app.services import highlight as highlight_svc
+
+    cands = [Segment(start=10.0, end=15.0, label="candidate", confidence=0.9)]
+    monkeypatch.setattr(highlight_svc.event_detect, "detect_candidates", lambda *a, **k: cands)
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [
+                {"start": 11.0, "end": 14.0, "label": "forehand", "confidence": 0.9,
+                 "scene_type": "practice", "reasoning": "正手击球"},
+            ],
+            # 顶层故意缺失 scene_type / reasoning
+        },
+    )
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=40.0, level="intermediate",
+    )
+    assert hl.scene_type == "practice"
+    assert hl.reasoning == "正手击球"
+
+
+def test_resolve_selection_levels():
+    """level → 高光选择策略映射：beginner/intermediate/professional 对应不同上限，all 启用全量。"""
+    cfg = load_config()
+    assert cfg.highlight.resolve_selection("beginner")["max_segments"] == 2
+    assert cfg.highlight.resolve_selection("intermediate")["max_segments"] == 3
+    assert cfg.highlight.resolve_selection("professional")["max_segments"] == 5
+    assert cfg.highlight.resolve_selection("all")["all_highlights"] is True
+    # 未知档位回退默认 max_segments，且非 all
+    fallback = cfg.highlight.resolve_selection("weird")
+    assert fallback["max_segments"] == cfg.highlight.max_segments
+    assert fallback["all_highlights"] is False
+
+
+def test_find_highlights_all_mode_captures_all_rounds(tmp_path, monkeypatch):
+    """all 档位：遍历整段、截取所有候选回合，不受 max_segments 截断、置 all_highlights。"""
+    from app.models import Segment
+    from app.services import highlight as highlight_svc
+
+    many = [
+        Segment(start=s, end=s + 4, label="candidate", confidence=0.9)
+        for s in (0, 10, 20, 30, 40, 50, 60, 70)
+    ]
+    monkeypatch.setattr(highlight_svc.event_detect, "detect_candidates", lambda *a, **k: many)
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {"segments": [], "scene_type": "match", "reasoning": "x"},
+    )
+    cfg = load_config()
+    cfg.highlight.max_segments = 3  # 普通档位上限 3，all 应忽略此上限
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", cfg, duration_seconds=80.0, level="all",
+    )
+    assert hl.all_highlights is True
+    assert len(hl.segments) == len(many), "all 档位应保留全部候选回合，不被 max_segments 截断"
+    assert hl.segments[0].start == 0.0
+    assert hl.segments[-1].end >= 70.0
+
+
+def test_find_highlights_all_mode_fills_missing_candidates(tmp_path, monkeypatch):
+    """all 档位：LLM 漏返部分候选窗口时，以候选本身补齐，确保全量覆盖。"""
+    from app.models import Segment
+    from app.services import highlight as highlight_svc
+
+    many = [
+        Segment(start=s, end=s + 4, label="candidate", confidence=0.9)
+        for s in (0, 10, 20, 30)
+    ]
+    monkeypatch.setattr(highlight_svc.event_detect, "detect_candidates", lambda *a, **k: many)
+    # 模型仅返回前两个候选窗口的高光，漏掉后两个 → all 模式应补齐
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [
+                {"start": 1.0, "end": 5.0, "label": "ace", "confidence": 0.95},
+                {"start": 11.0, "end": 15.0, "label": "winner", "confidence": 0.9},
+            ],
+            "scene_type": "match",
+            "reasoning": "x",
+        },
+    )
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=40.0, level="all",
+    )
+    assert hl.all_highlights is True
+    assert len(hl.segments) == len(many), "漏返的候选窗口应被补齐"
+    starts = sorted(s.start for s in hl.segments)
+    # 前两候选窗口被 LLM 精修段（ace/winner）覆盖，后两候选窗口以原始候选补齐
+    assert starts == [1.0, 11.0, 20.0, 30.0]
+
+
+def test_prompt_select_all_emits_full_coverage():
+    """select_all=True 时 Prompt 指示模型全部返回候选窗口（所有高光回合模式）。"""
+    from app.models import Segment
+    from prompts.highlight_analysis import build_highlight_prompt
+
+    p = build_highlight_prompt(
+        level="all", duration_seconds=120.0,
+        candidates=[Segment(start=1.0, end=3.0, label="candidate", confidence=0.9)], select_all=True,
+    )
+    assert "所有高光回合" in p
+
+

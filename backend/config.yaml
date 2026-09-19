@@ -49,11 +49,30 @@ highlight:
   min_segment_seconds: 3        # 单个片段最短时长（秒）
   scene_threshold: 0.4          # 场景切换判定阈值（ffmpeg scene filter）
   motion_fps: 4                 # 运动强度抽帧率（fps）
-  motion_threshold: 0.05        # 运动活跃阈值（灰度帧差均值，0-255 尺度）
+  motion_threshold: 0.05        # 运动活跃阈值（灰度帧差均值，0-255 尺度，兼作动作爆发下界）
   candidate_top_n: 5            # 候选窗口上限
+  # 可插拔信号管线：audio | motion | scene | audio_motion | auto（默认音频击球为主+运动辅助）
+  candidate_mode: audio_motion
+  # 音频击球检测（主信号）
+  audio_enabled: true
+  audio_sample_rate: 16000
+  audio_hit_percentile: 95      # 瞬态包络自适应阈值分位（0-100）
+  hit_cluster_gap_seconds: 4.0  # 相邻击球聚为回合的间隔上限（秒）
+  hit_window_expand: 2.0        # 回合窗口两侧外扩（秒）
+  # 运动强度分位爆发（辅助/无声兜底）
+  motion_action_percentile: 80  # 运动分数分位阈值（0-100）
+  # 准备段后过滤（安全网）
+  prep_exclusion: true
+  min_segment_confidence: 0.6   # 低于此置信度的段丢弃
+  # 分析分层 → 高光选择策略：level 驱动高光数量；all=所有高光回合（遍历整段、截取全部、不截断时长）
+  level_strategies:
+    beginner: { max_segments: 2 }
+    intermediate: { max_segments: 3 }
+    professional: { max_segments: 5 }
+    all: { all_highlights: true }
 
 report:
-  levels: [beginner, intermediate, professional]   # 分析分层
+  levels: [beginner, intermediate, professional, all]   # 分析分层（all=所有高光回合）
   language: zh
 
 queue:

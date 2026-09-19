@@ -19,9 +19,10 @@ class Segment(BaseModel):
 class HighlightResult(BaseModel):
     """高光识别结构化结果。"""
     segments: List[Segment] = Field(default_factory=list)
-    target_duration: int = Field(default=15, description="集锦目标时长（秒）")
+    target_duration: int = Field(default=15, description="集锦目标时长（秒）；all 模式忽略")
     scene_type: str = Field(default="unknown", description="场景类型：training / match / practice")
     reasoning: str = ""
+    all_highlights: bool = Field(default=False, description="all 档位：全段截取所有高光回合")
 
 
 class StrokeAnalysis(BaseModel):

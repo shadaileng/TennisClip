@@ -50,6 +50,9 @@ app.add_middleware(
 
 queue = TaskQueue(config)
 
+# 合法分析分层取值：beginner/intermediate/professional 为分析深度，all 为「所有高光回合」档位
+_VALID_LEVELS = {"beginner", "intermediate", "professional", "all"}
+
 # 初始化数据库（多兼容：SQLite/Postgres/MySQL，按 config.database.url）
 db_service.init_db(config)
 
@@ -143,6 +146,12 @@ async def process_video(
     二者皆无则 400。
     """
     task_id = uuid.uuid4().hex[:12]
+
+    if level not in _VALID_LEVELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"level 取值非法：{level}，应为 {sorted(_VALID_LEVELS)}",
+        )
 
     if md5:
         with db_service.session() as s:

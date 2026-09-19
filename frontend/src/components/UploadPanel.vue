@@ -19,6 +19,7 @@ const LEVELS = [
   { value: 'beginner', label: '入门' },
   { value: 'intermediate', label: '进阶' },
   { value: 'professional', label: '专业' },
+  { value: 'all', label: '所有高光回合' },
 ]
 
 // 服务商下拉：自定义（独立配置） + 各启用服务商
