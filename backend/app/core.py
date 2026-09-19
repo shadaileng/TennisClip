@@ -77,25 +77,31 @@ def run_pipeline(
         )
 
         # 4. 技术分析报告（非致命：失败仅缺失报告，不丢弃已生成的高光视频）
-        result.stage = "reporting"
-        logger.info("pipeline: stage=reporting {}", video_path.name)
-        report_file = task_out / "report.json"
-        try:
-            result.report = report.generate_report(
-                preprocessed, hl, config, level=level, out_path=report_file
-            )
-            result.report_path = str(report_file)
-            # 落库：输出 - 报告文件
-            if report_file.exists():
-                db_service.record_task_output(
-                    task_id, "report", str(report_file),
-                    report_file.stat().st_size / (1024 * 1024),
-                )
-        except Exception as exc:  # noqa: BLE001
+        #    all 档位（所有高光回合）仅做剪辑拼接，不调用 LLM 生成技术分析报告
+        if hl.all_highlights:
+            logger.info("pipeline: all 模式仅剪辑，跳过技术分析报告 {}", video_path.name)
             result.report = None
             result.report_path = None
-            result.report_error = str(exc)
-            logger.warning("pipeline: 报告生成失败（保留高光视频）: {}", exc)
+        else:
+            result.stage = "reporting"
+            logger.info("pipeline: stage=reporting {}", video_path.name)
+            report_file = task_out / "report.json"
+            try:
+                result.report = report.generate_report(
+                    preprocessed, hl, config, level=level, out_path=report_file
+                )
+                result.report_path = str(report_file)
+                # 落库：输出 - 报告文件
+                if report_file.exists():
+                    db_service.record_task_output(
+                        task_id, "report", str(report_file),
+                        report_file.stat().st_size / (1024 * 1024),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                result.report = None
+                result.report_path = None
+                result.report_error = str(exc)
+                logger.warning("pipeline: 报告生成失败（保留高光视频）: {}", exc)
 
         result.status = TaskStatus.SUCCEEDED
         result.elapsed_seconds = time.monotonic() - started

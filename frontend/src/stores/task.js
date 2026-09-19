@@ -43,6 +43,10 @@ export const useTaskStore = defineStore('task', {
     report(state) {
       return state.current?.report || null
     },
+    // all 档位（所有高光回合）：仅剪辑、不生成技术分析报告
+    allHighlights(state) {
+      return !!state.current?.highlight?.all_highlights
+    },
     // 当前生效服务商（优先 is_selected，其次 aiProvider 配置值）
     activeProvider(state) {
       const sel = state.providers.find((p) => p.is_selected)

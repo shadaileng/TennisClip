@@ -9,7 +9,7 @@
 ### Added
 
 - 分析分层 `level` 驱动高光选择策略：`beginner`/`intermediate`/`professional` 各对应不同高光数量档位（`max_segments` 2/3/5），由 `HighlightConfig.level_strategies` 映射 + `resolve_selection` 统一解析
-- 新增「所有高光回合」档位 `level=all`：遍历整段视频、截取并拼接全部高光时刻，不受 `max_segments` 与 `target_duration` 约束；`HighlightResult.all_highlights` 作为全段拼接唯一事实来源，下游剪辑/报告据此全量处理
+- 新增「所有高光回合」档位 `level=all`：遍历整段视频、截取并拼接全部高光时刻，不受 `max_segments` 与 `target_duration` 约束；`HighlightResult.all_highlights` 作为全段拼接唯一事实来源，下游剪辑据此全段拼接，且 `core.run_pipeline` 在 all 档位跳过技术分析报告生成（仅剪辑、不分析）
 - `event_detect.detect_candidates` 新增 `top_n` 参数（`None`=不截断），`build_highlight_prompt` 新增 `select_all` 全量返回约束，前端 `UploadPanel` 新增「所有高光回合」选项
 - `POST /api/v1/process` 的 `level` 参数新增合法值校验（beginner/intermediate/professional/all，非法返回 400）
 

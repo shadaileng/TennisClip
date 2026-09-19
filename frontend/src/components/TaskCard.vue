@@ -21,12 +21,21 @@ const showResults = computed(
 )
 
 // 处理阶段步骤条（与后端 run_pipeline 的 stage 对齐）
-const stages = [
-  { key: 'preprocessing', label: '预处理' },
-  { key: 'highlighting', label: '高光识别' },
-  { key: 'editing', label: '自动剪辑' },
-  { key: 'reporting', label: '报告生成' },
-]
+// all 档位（所有高光回合）仅剪辑、不生成报告，步骤条隐藏「报告生成」
+const stages = computed(() =>
+  store.allHighlights
+    ? [
+        { key: 'preprocessing', label: '预处理' },
+        { key: 'highlighting', label: '高光识别' },
+        { key: 'editing', label: '自动剪辑' },
+      ]
+    : [
+        { key: 'preprocessing', label: '预处理' },
+        { key: 'highlighting', label: '高光识别' },
+        { key: 'editing', label: '自动剪辑' },
+        { key: 'reporting', label: '报告生成' },
+      ]
+)
 const currentStageIndex = computed(() =>
   stages.findIndex((s) => s.key === task.value?.stage)
 )
@@ -120,7 +129,7 @@ function labelClass(i) {
       <!-- 成功结果 -->
       <div v-if="showResults" class="space-y-4">
         <VideoPlayer :src="store.highlightVideoUrl" :segments="store.highlightSegments" />
-        <ReportView :report="store.report" />
+        <ReportView :report="store.report" :all-mode="store.allHighlights" />
         <div class="flex gap-2">
           <a
             :href="store.highlightVideoUrl"
@@ -130,6 +139,7 @@ function labelClass(i) {
             ⬇ 下载集锦
           </a>
           <a
+            v-if="!store.allHighlights"
             :href="`/api/v1/tasks/${task.task_id}/report`"
             download
             class="rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-600"

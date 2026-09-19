@@ -487,3 +487,42 @@ def test_prompt_select_all_emits_full_coverage():
     assert "所有高光回合" in p
 
 
+def test_run_pipeline_all_mode_skips_report(tmp_path, monkeypatch):
+    """all 档位（所有高光回合）仅剪辑：run_pipeline 不调用 report.generate_report（不分析）。"""
+    from app.core import run_pipeline
+    from app.models import HighlightResult, Segment, TaskResult, TaskStatus
+    from app.services import highlight as highlight_svc, preprocess as pre_svc
+    from app.services import report as report_svc, video_editor as editor_svc
+
+    monkeypatch.setattr(pre_svc, "preprocess", lambda *a, **k: tmp_path / "v.mp4")
+    monkeypatch.setattr(pre_svc, "probe_video", lambda *a, **k: {"duration": 40.0})
+    hl = HighlightResult(
+        segments=[Segment(start=1.0, end=5.0, label="ace", confidence=0.9)],
+        all_highlights=True,
+    )
+    monkeypatch.setattr(highlight_svc, "find_highlights", lambda *a, **k: hl)
+
+    def _fake_edit(*a, **k):
+        out = tmp_path / "out.mp4"
+        out.write_bytes(b"dummy")
+        return out
+
+    monkeypatch.setattr(editor_svc, "edit_highlight_video", _fake_edit)
+
+    called = {"report": False}
+
+    def _fake_report(*a, **k):
+        called["report"] = True
+        raise AssertionError("all 模式不应生成技术分析报告")
+
+    monkeypatch.setattr(report_svc, "generate_report", _fake_report)
+
+    res = run_pipeline(
+        tmp_path / "v.mp4", load_config(), TaskResult(task_id="all1"), level="all",
+    )
+    assert res.status == TaskStatus.SUCCEEDED
+    assert res.report is None
+    assert res.report_path is None
+    assert called["report"] is False, "all 档位不应调用报告生成"
+
+

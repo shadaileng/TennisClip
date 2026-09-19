@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 const props = defineProps({
   report: { type: Object, default: null },
+  allMode: { type: Boolean, default: false },
 })
 
 const report = computed(() => props.report)
@@ -14,7 +15,8 @@ const hasContent = computed(() => !!report.value && !!report.value.summary)
     <h3 class="mb-2 text-sm font-semibold text-slate-100">技术分析报告</h3>
 
     <p v-if="!hasContent" class="rounded-lg bg-slate-800 p-4 text-center text-xs text-slate-500">
-      报告生成中…
+      <template v-if="allMode">所有高光回合模式：仅生成剪辑集锦，未生成技术分析报告</template>
+      <template v-else>报告生成中…</template>
     </p>
 
     <div v-else class="space-y-3">
