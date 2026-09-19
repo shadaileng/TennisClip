@@ -9,11 +9,13 @@
 llm:
   active_provider: default
   temperature: 0.2                    # 低温度保证结构化输出稳定
-  max_tokens: 4096
+  max_tokens: 16384                    # 推理模型需留足预算（step-3.7-flash 思考会消耗 token，避免 length 截断）
+  enable_thinking: false               # 结构化抽取无需长链推理；false 时代码改用 reasoning_effort=low 降压
   max_frames: 16                       # 每次 LLM 调用抽帧上限（降延迟；agnes 模型偏慢）
   timeout_seconds: 300                 # 单次调用超时（agnes-3.0-flash + 多帧较慢，需放大；报告阶段实测 121s）
   max_retries: 1                       # 超时/网络错误重试次数（避免 SDK 默认 2 次叠加放大超时）
   mock_mode: auto                     # auto | always | never
+  analysis_mode: frame                # 高光识别媒体输入策略：frame（抽帧）| video（视频理解）
   providers:
     # 默认：阶跃星辰 Step 3.7 Flash（OpenAI 兼容端点）
     - name: default

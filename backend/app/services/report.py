@@ -35,6 +35,7 @@ def generate_report(
         prompt=prompt,
         config=config,
         schema_hint="TechnicalReport",
+        analysis_mode="frame",
     )
 
     if result:

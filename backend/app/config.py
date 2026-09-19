@@ -49,11 +49,13 @@ class LLMConfig:
     providers: dict = field(default_factory=dict)
     active_provider: str = "default"
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 16384
+    enable_thinking: bool = False          # 结构化抽取无需长链推理；关闭可避免思考 token 耗尽导致 length 截断
     max_frames: int = 16
     timeout_seconds: int = 180
     max_retries: int = 1
     mock_mode: str = "auto"
+    analysis_mode: str = "frame"           # 高光识别媒体输入策略：frame（抽帧）| video（视频理解）
 
     def resolve(self) -> ProviderConfig:
         """按 active_provider 解析出当前生效的提供商。"""

@@ -121,12 +121,17 @@ def _process_one(
     task_id: str,
     level: str = "intermediate",
     result: Optional[TaskResult] = None,
+    analysis_mode: Optional[str] = None,
+    enabled_stages: Optional[list] = None,
 ) -> TaskResult:
     if result is None:
         result = TaskResult(task_id=task_id, source_video=str(video_path))
     started = time.monotonic()
     try:
-        run_pipeline(video_path, config, result, level=level)
+        run_pipeline(
+            video_path, config, result, level=level,
+            analysis_mode=analysis_mode, enabled_stages=enabled_stages,
+        )
     finally:
         result.elapsed_seconds = time.monotonic() - started
     return result
@@ -153,6 +158,12 @@ async def process_video(
             detail=f"level 取值非法：{level}，应为 {sorted(_VALID_LEVELS)}",
         )
 
+    # 解析管线全局配置（启用阶段 / 分析模式 / 层级），DB 覆盖 > 默认值
+    from app.services import config_service
+
+    with db_service.session() as s:
+        pipeline_cfg = config_service.get_pipeline_config(s, config)
+
     if md5:
         with db_service.session() as s:
             rec = upload_service.find_by_md5(s, md5)
@@ -178,7 +189,14 @@ async def process_video(
     # 落库：上传文件记录
     db_service.record_task_output(task_id, "uploaded", str(video_path), size_mb)
 
-    queue.submit(lambda r: _process_one(video_path, task_id, level, result=r), task_id=task_id)
+    queue.submit(
+        lambda r: _process_one(
+            video_path, task_id, level, result=r,
+            analysis_mode=pipeline_cfg["analysis_mode"],
+            enabled_stages=pipeline_cfg["enabled_stages"],
+        ),
+        task_id=task_id,
+    )
     return {"task_id": task_id, "status": TaskStatus.PENDING.value}
 
 

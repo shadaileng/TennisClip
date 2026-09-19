@@ -17,15 +17,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import json as _json
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.config_registry import (
+    DEFAULT_STAGES,
     SOURCE_BUILTIN,
     SOURCE_DB,
     SOURCE_ENV,
     VALUE_TYPE_SECRET,
+    VALUE_TYPE_SELECT,
     VALUE_TYPE_URL,
+    VALID_STAGES,
     find_config_item,
 )
 from app.db_models import AiProvider, SystemConfig
@@ -89,7 +93,34 @@ def _validate_value(item, value: str) -> str:
                 status_code=400, detail=f"{item.label} 必须是 http(s):// 开头的合法地址"
             )
         return str(value).strip()
+    if vtype == VALUE_TYPE_SELECT and item.options is not None:
+        if value not in item.options:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{item.label} 取值非法：{value}，应为 {item.options}",
+            )
     return value
+
+
+def _validate_stages(value: str) -> list:
+    """校验 pipeline.stages：须为合法 JSON 数组，元素 ∈ 合法阶段集；非法抛 400。"""
+    try:
+        parsed = _json.loads(value)
+    except _json.JSONDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="pipeline.stages 必须是合法 JSON 数组，例如 [\"preprocess\",\"highlight\",\"edit\",\"report\"]",
+        )
+    if not isinstance(parsed, list) or not parsed:
+        raise HTTPException(status_code=400, detail="pipeline.stages 不能为空数组")
+    invalid = [s for s in parsed if s not in VALID_STAGES]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"pipeline.stages 含非法阶段：{invalid}，合法值为 {sorted(VALID_STAGES)}",
+        )
+    # 按固定顺序重排，丢弃重复，保证与 DEFAULT_STAGES 次序一致
+    return [s for s in DEFAULT_STAGES if s in parsed]
 
 
 def set_config_value(db: Session, key: str, value: str, config: Any = None) -> dict[str, Any]:
@@ -106,6 +137,12 @@ def set_config_value(db: Session, key: str, value: str, config: Any = None) -> d
         current = row.value if row is not None else item.default
         if value == "" or value == mask_secret(current):
             return _build_item(db, key, config)
+
+    if item.key == "pipeline.stages":
+        normalized = _validate_stages(value)
+        normalized = _json.dumps(normalized, ensure_ascii=False)
+    else:
+        normalized = _validate_value(item, value)
 
     normalized = _validate_value(item, value)
 
@@ -186,6 +223,28 @@ def get_ai_config(db: Session, config: Any) -> AIConfig:
         base_url_override=_get_override_value(db, "ai.base_url"),
         config=config,
     )
+
+
+def get_pipeline_config(db: Session, config: Any = None) -> dict[str, Any]:
+    """解析管线全局配置：启用阶段（按固定顺序）、分析模式、分析层级。
+
+    生效值取 DB 覆盖 > 注册表默认；非法/缺失时回落默认全开全序，保证任务可运行。
+    """
+    cfg = config or _load_config()
+    # enabled_stages：JSON 解析 → 仅保留合法阶段并按固定顺序重排
+    raw = get_config_value(db, "pipeline.stages", cfg)
+    try:
+        parsed = _json.loads(raw)
+    except _json.JSONDecodeError:
+        parsed = list(DEFAULT_STAGES)
+    enabled = [s for s in DEFAULT_STAGES if s in parsed and s in VALID_STAGES]
+    if not enabled:
+        enabled = list(DEFAULT_STAGES)
+    return {
+        "enabled_stages": enabled,
+        "analysis_mode": get_config_value(db, "llm.analysis_mode", cfg),
+        "level": get_config_value(db, "highlight.level", cfg),
+    }
 
 
 def list_provider_options(db: Session) -> list[str]:

@@ -5,6 +5,7 @@ import HealthBar from './components/HealthBar.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import TaskCard from './components/TaskCard.vue'
 import ProviderManageModal from './components/ProviderManageModal.vue'
+import StrategyModal from './components/StrategyModal.vue'
 
 const store = useTaskStore()
 
@@ -44,6 +45,13 @@ function onUnload() {
         >
           模型管理
         </button>
+        <button
+          type="button"
+          class="rounded-lg border border-emerald-500/50 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10"
+          @click="store.openStrategy()"
+        >
+          策略设置
+        </button>
       </div>
     </header>
 
@@ -67,5 +75,6 @@ function onUnload() {
     </footer>
 
     <ProviderManageModal :open="store.managing" @close="store.closeManage()" />
+    <StrategyModal :open="store.strategizing" @close="store.closeStrategy()" />
   </div>
 </template>

@@ -35,6 +35,7 @@ export default defineConfig({
             { text: '05：高光候选定位方案', link: '/plans/05-高光候选定位方案' },
             { text: '06：两步上传与 MD5 秒传', link: '/plans/06-两步上传与MD5秒传' },
             { text: '07：分析分层挂钩高光', link: '/plans/07-分析分层挂钩高光' },
+            { text: '08：视频理解节点与策略模态框', link: '/plans/08-视频理解节点与策略模态框' },
           ],
         },
       ],

@@ -16,6 +16,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 CATEGORY_AI = "ai"
+CATEGORY_PIPELINE = "pipeline"
+
+# 管线阶段固定顺序与合法取值（用于 pipeline.stages 校验与解析）
+DEFAULT_STAGES: list[str] = ["preprocess", "highlight", "edit", "report"]
+VALID_STAGES: set[str] = set(DEFAULT_STAGES)
+DEFAULT_STAGES_JSON = '["preprocess","highlight","edit","report"]'
 
 VALUE_TYPE_STR = "str"
 VALUE_TYPE_SECRET = "secret"
@@ -87,6 +93,38 @@ def build_config_items(config) -> list[ConfigItem]:
             value_type=VALUE_TYPE_URL,
             editable=True,
             default="",
+            env_key=None,
+        ),
+        ConfigItem(
+            key="highlight.level",
+            category=CATEGORY_PIPELINE,
+            label="分析层级",
+            description="高光识别与报告的分析深度；all=所有高光回合（遍历整段、截取全部、不截断时长）",
+            value_type=VALUE_TYPE_SELECT,
+            editable=True,
+            default="intermediate",
+            env_key=None,
+            options=["beginner", "intermediate", "professional", "all"],
+        ),
+        ConfigItem(
+            key="llm.analysis_mode",
+            category=CATEGORY_PIPELINE,
+            label="分析模式",
+            description="高光识别媒体输入策略：frame=抽帧（默认）；video=视频理解（整段视频直送）",
+            value_type=VALUE_TYPE_SELECT,
+            editable=True,
+            default=config.llm.analysis_mode,
+            env_key=None,
+            options=["frame", "video"],
+        ),
+        ConfigItem(
+            key="pipeline.stages",
+            category=CATEGORY_PIPELINE,
+            label="管线阶段",
+            description="启用的管线阶段有序列表（JSON 数组），固定顺序：预处理→高光识别→剪辑→报告",
+            value_type=VALUE_TYPE_STR,
+            editable=True,
+            default=DEFAULT_STAGES_JSON,
             env_key=None,
         ),
     ]

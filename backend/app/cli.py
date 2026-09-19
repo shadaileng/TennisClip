@@ -52,7 +52,10 @@ def main() -> int:
             logger.error("视频不存在: {}", video)
             return 1
         result = TaskResult(task_id="cli-0001", source_video=str(video))
-        run_pipeline(video, config, result, level=args.level)
+        run_pipeline(
+            video, config, result, level=args.level,
+            analysis_mode=config.llm.analysis_mode,
+        )
         results.append(result)
     else:
         if args.batch:
@@ -74,7 +77,10 @@ def main() -> int:
 
         for video in videos:
             queue.submit(
-                lambda r, v=video: run_pipeline(v, config, r, level=args.level)
+                lambda r, v=video: run_pipeline(
+                    v, config, r, level=args.level,
+                    analysis_mode=config.llm.analysis_mode,
+                )
             )
         # 等待全部完成
         while not all(

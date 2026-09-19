@@ -10,17 +10,9 @@ const props = defineProps({
 
 const store = useTaskStore()
 
-const level = ref('intermediate')
 const file = ref(null)
 const inputRef = ref(null)
 const dragging = ref(false)
-
-const LEVELS = [
-  { value: 'beginner', label: '入门' },
-  { value: 'intermediate', label: '进阶' },
-  { value: 'professional', label: '专业' },
-  { value: 'all', label: '所有高光回合' },
-]
 
 // 服务商下拉：自定义（独立配置） + 各启用服务商
 const providerOptions = computed(() => store.providerOptions)
@@ -38,6 +30,28 @@ const switchingProvider = computed(() => store.switchingProvider)
 const loadingProviders = computed(() => store.loadingProviders)
 const providerError = computed(() => store.providerError)
 
+// 当前策略展示（读全局配置）
+const LEVEL_LABELS = {
+  beginner: '入门',
+  intermediate: '进阶',
+  professional: '专业',
+  all: '所有高光回合',
+}
+const STAGE_DEFS = [
+  { key: 'preprocess', label: '预处理' },
+  { key: 'highlight', label: '高光识别' },
+  { key: 'edit', label: '剪辑' },
+  { key: 'report', label: '报告' },
+]
+const activeStages = computed(
+  () => store.pipelineStages || ['preprocess', 'highlight', 'edit', 'report'],
+)
+const stageDefs = computed(() =>
+  STAGE_DEFS.map((s) => ({ ...s, enabled: activeStages.value.includes(s.key) })),
+)
+const modeLabel = computed(() => (store.analysisMode === 'video' ? '视频理解' : '抽帧'))
+const levelLabel = computed(() => LEVEL_LABELS[store.defaultLevel] || store.defaultLevel)
+
 // 两步上传阶段反馈
 const uploadPhase = computed(() => store.uploadPhase)
 const uploadPercent = computed(() => Math.round((store.uploadProgress || 0) * 100))
@@ -49,34 +63,59 @@ function onFiles(e) {
 
 function submit() {
   if (file.value && !props.loading) {
-    emit('submit', file.value, level.value)
+    emit('submit', file.value, store.defaultLevel)
   }
 }
 </script>
 
 <template>
   <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-    <h2 class="mb-4 text-base font-semibold text-slate-100">上传网球视频</h2>
+    <div class="mb-4 flex items-center justify-between">
+      <h2 class="text-base font-semibold text-slate-100">上传网球视频</h2>
+      <button
+        type="button"
+        class="rounded-lg border border-emerald-500/50 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10"
+        @click="store.openStrategy()"
+      >
+        策略设置
+      </button>
+    </div>
 
-    <label class="mb-3 flex cursor-pointer items-center justify-between rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm">
-      <span class="text-slate-300">分析层级</span>
-      <div class="flex gap-1">
+    <!-- 当前策略概览（位于服务商上方） -->
+    <div class="mb-4 rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-3">
+      <div class="mb-2 flex items-center justify-between">
+        <span class="text-xs font-medium text-slate-400">当前策略</span>
         <button
-          v-for="lv in LEVELS"
-          :key="lv.value"
           type="button"
-          :class="[
-            'rounded-lg px-3 py-1.5 text-xs transition',
-            level === lv.value
-              ? 'bg-emerald-500 text-slate-950 font-semibold'
-              : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          ]"
-          @click="level = lv.value"
+          class="rounded-lg border border-emerald-500/40 px-2.5 py-1 text-[11px] font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/10"
+          @click="store.openStrategy()"
         >
-          {{ lv.label }}
+          调整
         </button>
       </div>
-    </label>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="rounded-md bg-slate-700/50 px-2 py-1 text-xs text-slate-300">
+          模式 · <span class="text-emerald-300">{{ modeLabel }}</span>
+        </span>
+        <span class="rounded-md bg-slate-700/50 px-2 py-1 text-xs text-slate-300">
+          层级 · <span class="text-emerald-300">{{ levelLabel }}</span>
+        </span>
+      </div>
+      <div class="mt-2 flex flex-wrap gap-1.5">
+        <span
+          v-for="s in stageDefs"
+          :key="s.key"
+          :class="[
+            'rounded-full px-2.5 py-0.5 text-[11px] transition',
+            s.enabled
+              ? 'bg-emerald-500/15 text-emerald-300'
+              : 'bg-slate-800 text-slate-600 line-through',
+          ]"
+        >
+          {{ s.label }}
+        </span>
+      </div>
+    </div>
 
     <label class="mb-3 flex cursor-pointer items-center justify-between rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm">
       <span class="text-slate-300">服务商</span>

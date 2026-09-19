@@ -23,20 +23,37 @@ _UNIFORM_SCENE_TYPES = {"training", "practice", "unknown"}
 # 候选窗口相对 LLM 精修的允许外扩（秒），与 prompt 中"±2s"约束一致
 _CANDIDATE_MARGIN = 2.0
 
+# 后处理安全网：这些标签代表"非有效高光"（准备段/明显失误），直接丢弃
+_EXCLUDED_LABELS = {"other", "out", "error", "fault", "miss", "fail"}
+
+# 视频理解退化判定：返回"覆盖整段的单一长段"等于没剪辑，需更严格指令重试
+_DEGENERATE_COVER_RATIO = 0.8
+
+# 退化重试时追加的强制指令（要求至少切出多个段、任何单段不得覆盖过多）
+_STRICT_SPLIT_APPEND = (
+    "\n\n【强制补充】你上一次把整段视频返回为单一长段，这等于完全没剪辑。"
+    "请严格按\"连续击球—死时间停顿—连续击球\"的节奏，把视频切成多个独立击球片段，"
+    "段间的死时间（捡球 / 走位 / 等待 / 休息）务必剔除；至少返回 3 个以上 segment，"
+    "且任何单个 segment 的时长不得超过视频总时长的 40%。"
+)
+
 
 def find_highlights(
     video_path: Path,
     config: AppConfig,
     duration_seconds: Optional[float] = None,
     level: str = "intermediate",
+    analysis_mode: Optional[str] = None,
 ) -> HighlightResult:
     """识别高光回合，返回结构化时间戳。
 
-    流程：ffmpeg 信号（音频击球为主 + 运动强度为辅，按 candidate_mode 可插拔）定位候选窗口
+    抽帧模式流程：ffmpeg 信号（音频击球为主 + 运动强度为辅）定位候选窗口
          → 构造领域 Prompt（携带候选时间戳与准备段排除约束）
-         → 调用 LLM（自动 Mock 回退）段内精修 → 解析 JSON 并锚定到候选窗口
+         → 调用 LLM 段内精修 → 解析 JSON 并锚定到候选窗口（±2s）
          → 准备段后过滤（丢弃 other/低置信/与动作窗口不重叠的段）。
-    候选缺失（无信号）时回退均匀切片兜底，避免整段被当成一个高光、最终只裁开头。
+    视频理解流程：不跑 ffmpeg 信号检测、不依赖候选窗口（信号本就不准，故选用视频理解），
+         直接传空候选，由模型观看整段视频独立定位高光；仅做时长合法性 + 准备段过滤。
+    候选缺失（抽帧无信号 / 视频理解）时回退均匀切片兜底，避免整段被当成一个高光、最终只裁开头。
 
     level 驱动高光选择策略（config.highlight.resolve_selection）：beginner/intermediate/
     professional 各对应不同 max_segments 上限；all（所有高光回合）遍历整段、不截断候选与
@@ -45,17 +62,23 @@ def find_highlights(
     logger.info("highlight: start for {} (level={})", video_path.name, level)
     sel = config.highlight.resolve_selection(level)
     all_highlights = sel["all_highlights"]
-    # all 档位遍历整段：候选不截断；其余沿用 candidate_top_n 默认上限
-    top_n = None if all_highlights else config.highlight.candidate_top_n
-    candidates = (
-        event_detect.detect_candidates(video_path, config, float(duration_seconds), top_n=top_n)
-        if duration_seconds else []
-    )
+    mode = analysis_mode or "frame"
+    # 视频理解：ffmpeg 候选窗口本就不准（这正是选用视频理解的原因），故完全不跑信号检测、
+    # 直接传空候选，由模型自由观看整段并独立定位高光；
+    # 仅抽帧模式需要候选窗口锚定抽帧位置与 ±2s 精修。
+    if mode == "frame" and duration_seconds:
+        # all 档位遍历整段：候选不截断；其余沿用 candidate_top_n 默认上限
+        top_n = None if all_highlights else config.highlight.candidate_top_n
+        candidates = event_detect.detect_candidates(
+            video_path, config, float(duration_seconds), top_n=top_n
+        )
+    else:
+        candidates = []
     useful = bool(candidates) and not _candidates_degenerate(candidates, duration_seconds)
     prompt_cands = candidates if useful else []
     prompt = build_highlight_prompt(
         level=level, duration_seconds=duration_seconds, candidates=prompt_cands,
-        select_all=all_highlights,
+        select_all=all_highlights, mode=mode,
     )
 
     result = llm.complete_structured(
@@ -64,6 +87,7 @@ def find_highlights(
         config=config,
         schema_hint="HighlightResult",
         candidates=prompt_cands,
+        analysis_mode=analysis_mode,
     )
     if result is None:
         raise RuntimeError("LLM 未返回结构化结果")
@@ -73,7 +97,38 @@ def find_highlights(
     highlight = HighlightResult(**result)
     highlight.target_duration = config.highlight.target_duration
     highlight.all_highlights = all_highlights
-    if useful:
+
+    # 视频理解退化兜底：模型把整段返回为单一长段（等于没剪辑）时，用更严格指令重试一次
+    if mode == "video" and _is_degenerate_single(highlight, duration_seconds):
+        logger.warning(
+            "highlight: 视频模式返回单一长段（覆盖整段），疑似未剪辑，改用更严格指令重试一次",
+        )
+        result2 = llm.complete_structured(
+            video_path=video_path,
+            prompt=prompt + _STRICT_SPLIT_APPEND,
+            config=config,
+            schema_hint="HighlightResult",
+            candidates=prompt_cands,
+            analysis_mode=analysis_mode,
+        )
+        if result2:
+            _lift_scene_fields(result2)
+            highlight = HighlightResult(**result2)
+            highlight.target_duration = config.highlight.target_duration
+            highlight.all_highlights = all_highlights
+
+    if mode == "video":
+        # 视频理解：模型自由定位，不锚定候选窗口；仅做时长合法性 + 准备段过滤
+        _clamp_segments(
+            highlight, config, duration_seconds,
+            max_segments=sel["max_segments"], cap=not all_highlights,
+        )
+        # 准备段后过滤（仅按 label/置信度，不强制与候选重叠）
+        _exclude_prep(highlight, config, [])
+        # 训练/练习类若模型未产出可用高光（如整段判为 other），兜底均匀切片覆盖全程
+        if not highlight.segments:
+            _maybe_uniform_slices(highlight, config, duration_seconds)
+    elif useful:
         # 锚定到候选窗口，避免 LLM 再次臆造时间戳
         _clamp_to_candidates(highlight, candidates, config, max_segments=sel["max_segments"], cap=not all_highlights)
         if not highlight.segments:
@@ -90,10 +145,18 @@ def find_highlights(
         # 准备段后过滤（无候选时仅按 label/置信度过滤）
         _exclude_prep(highlight, config, [])
     logger.info(
-        "highlight: {} segments (level={} all={})",
-        len(highlight.segments), level, all_highlights,
+        "highlight: {} segments (level={} all={} mode={})",
+        len(highlight.segments), level, all_highlights, mode,
     )
     return highlight
+
+
+def _is_degenerate_single(highlight: "HighlightResult", duration: Optional[float]) -> bool:
+    """视频理解退化判定：仅返回 1 个 segment 且覆盖整段（≥80%），等于没剪辑。"""
+    if not duration or len(highlight.segments) != 1:
+        return False
+    seg = highlight.segments[0]
+    return (seg.end - seg.start) >= _DEGENERATE_COVER_RATIO * duration
 
 
 def _candidates_degenerate(candidates: list[Segment], duration: Optional[float]) -> bool:
@@ -247,7 +310,7 @@ def _exclude_prep(highlight: HighlightResult, config: AppConfig, candidates: lis
     spans = [(c.start, c.end) for c in candidates]
     kept = []
     for seg in highlight.segments:
-        if seg.label == "other":
+        if seg.label in _EXCLUDED_LABELS:
             continue
         if seg.confidence < cfg.min_segment_confidence:
             continue

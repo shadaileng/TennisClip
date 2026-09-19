@@ -20,7 +20,7 @@ TennisClip/
 │   │   ├── db.py             # 数据库引擎/会话（Alembic 迁移 + create_all 兜底）
 │   │   ├── db_models.py      # ORM 表结构（Alembic autogenerate 的目标元数据）
 │   │   ├── services/         # preprocess / highlight / video_editor / report / db_service
-│   │   └── utils/            # ffmpeg / llm / tasks / logger
+│   │   └── utils/            # ffmpeg / llm / tasks / logger / media_strategies（视频理解策略）
 │   ├── alembic/              # 数据库迁移（env.py + versions/*.py，迁移脚本入库）
 │   ├── alembic.ini           # Alembic 配置（连接串由 env.py 动态解析，不写死）
 │   ├── prompts/              # 领域 Prompt 模板（网球教学知识库注入点）
@@ -38,7 +38,7 @@ TennisClip/
 ├── frontend/                 # Vue 3 / Vite / Pinia / Tailwind
 │   ├── src/
 │   │   ├── main.js / App.vue
-│   │   ├── components/       # HealthBar / UploadPanel / TaskCard / VideoPlayer / ReportView
+│   │   ├── components/       # HealthBar / UploadPanel / TaskCard / VideoPlayer / ReportView / ProviderManageModal / StrategyModal
 │   │   ├── lib/api.js        # 后端 API 客户端
 │   │   └── stores/task.js    # Pinia 任务状态（轮询）
 │   ├── index.html / vite.config.js / tailwind.config.js / postcss.config.js
@@ -98,14 +98,20 @@ TennisClip/
 | PUT | `/api/v1/db/providers/{id}` | 编辑服务商（按 id 定位；api_key 留空表示保留原值；重复名 409） |
 | DELETE | `/api/v1/db/providers/{id}` | 删除服务商（被 `ai.provider` 直选引用时返回 409） |
 | POST | `/api/v1/db/providers/check-models` | 校验模型可用性：body 传 `base_url`/`api_key`/`models`，返回 list（GET /models）或逐模型 probe（chat/completions）结果 |
-| GET | `/api/v1/config` | 配置 KV 列表（ai.provider/ai.model/ai.api_key/ai.base_url；select 项含动态选项、secret 掩码、source 标明 db/config/env/builtin） |
-| PUT | `/api/v1/config/{key}` | 设置配置覆盖（如 `ai.provider` 切换服务商、`ai.model` 覆盖模型；secret 空值=保留、等于默认值=自动删行） |
+| GET | `/api/v1/config` | 配置 KV 列表（ai.* 服务商配置；**pipeline 类**：`highlight.level`/`llm.analysis_mode`/`pipeline.stages`；select 项含动态选项、secret 掩码、source 标明 db/config/env/builtin） |
+| PUT | `/api/v1/config/{key}` | 设置配置覆盖（如 `ai.provider` 切换服务商、`ai.model` 覆盖模型；**`pipeline.stages` 写入时校验 JSON 数组且元素 ∈ {preprocess,highlight,edit,report}，非法返回 400**；secret 空值=保留、等于默认值=自动删行） |
 | DELETE | `/api/v1/config/{key}` | 删除配置覆盖（恢复默认值） |
 
 模型服务商以 OpenAI 兼容三要素（`base_url` / `api_key` / `models`）在 `backend/config.yaml` 的 `llm.providers` 声明（`models` 优先，缺省由 `model` 包装为单元素列表），通过 `llm.active_provider` 切换；该结构已落地到数据库 `ai_providers` 表（纯凭据目录：`id` 主键、`name` 唯一、`enabled` 用 int、无 `is_active`/`selected_model`）。`api_key` **直接入库明文**、列表/详情接口以掩码返回（**前 3 + 末 4 位**，如 `sk-****cdef`），管理页用密码框填写；每个服务商可配多个模型（`models` JSON 列表，首项为 `default_model`）。未配置 API Key 时 LLM 客户端自动回退 **Mock 模式**（`llm.mock_mode: auto`）。
 
 - 激活服务商与选定模型不再存于 provider 行内，而是由 `system_config` 配置 KV 表覆盖：`ai.provider`（直选生效服务商，值可为某服务商名或 `custom`）、`ai.model`（覆盖所选服务商的默认模型，空=跟随默认）；另含 `ai.api_key`/`ai.base_url` 供 `custom` 独立配置。配置 KV 子系统由 `app/config_registry.py`（最小注册表）+ `app/services/config_service.py`（`get_ai_config`/`mask_secret`/配置覆盖）封装。
 - 生效服务商的唯一事实来源为配置 KV `ai.provider`：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均经 `config_service.get_ai_config(config)` 解析——命中启用服务商则引用其 `api_key`/`base_url`、`model` 取 `ai.model` 覆盖或 `default_model`，否则回落静态 `config.active_provider`（DB 故障返回 `None` 由调用方降级，继续回落静态配置）。原 `db_service.get_active_provider()` 已移除。
+- 管线全局策略同样走配置 KV 子系统（**不新增表、不需 Alembic 迁移**），由前端「策略调整」模态框（`frontend/src/components/StrategyModal.vue`）一键持久化，影响之后所有任务：
+  - `highlight.level`（分析层级：beginner/intermediate/professional/all，默认 intermediate）— 高光识别与报告的分析深度，`all`=所有高光回合（仅剪辑拼接、不生成技术分析报告）。
+  - `llm.analysis_mode`（高光识别媒体输入策略：frame=抽帧/video=视频理解，默认 frame）— 经 `app/utils/media_strategies.py` 的策略注册表分发；`video` 模式将整段 MP4 以 `data:video/mp4;base64,...` 内联为单个 `video_url` 块直送（置于文本之前），>128MB 仅 `logger.warning` 不切片，候选窗口作为软提示（模型自由定位），后处理仅做时长合法性 + 准备段过滤；`frame` 模式保持原抽帧行为零回归。`report` 固定 `analysis_mode="frame"` 不受影响。
+  - `pipeline.stages`（启用的管线阶段有序 JSON 数组，默认 `["preprocess","highlight","edit","report"]`）— `config_service.set_config_value` 校验 JSON 数组且元素 ∈ 合法集合（非法 400），解析时按固定顺序重排。
+  - 三项生效值统一由 `config_service.get_pipeline_config(db, config)` 解析（DB 覆盖 > 默认值），在 `main.process_video` 解析后透传 `core.run_pipeline(analysis_mode=, enabled_stages=)`。
+- 管线阶段化（`app/core.py` 的 `run_pipeline`）：固定顺序 `[preprocess, highlight, edit, report]`，按 `enabled_stages` 集合启用/停用；依赖校验（`_validate_enabled_stages`）要求高光识别/剪辑/报告 依赖 预处理、剪辑/报告 依赖 高光识别（非法组合抛清晰 ValueError，任务判 FAILED），保证阶段编排安全。新增节点保持该契约。
 - 启动环境自检（`app/utils/environment.py` 的 `run_startup_checks`）在 FastAPI 启动时执行一次，结果存入 `app.state.environment_checks` 并映射到 `/health` 的 `environment` 字段；任一项不通过仅 `logger.warning`、不阻断启动。`environment` 含四项：`ffmpeg`（探测 ffmpeg/ffprobe，ok/fail）、`database`（按 `config.database.url` 建连并执行 `SELECT 1` ping，ok/fail）、`provider`（优先 DB `ai.provider` 配置引用，关键字段缺失/无法解析判 fail，无 API Key 且 `mock_mode=auto` 判 warn、否则 fail）、`data_dir`（目录可创建且可写，ok/fail）。各 `detail` 不回显凭据：数据库连接串 `@` 前部分（用户名/密码）已剥离，API Key 仅以布尔 `api_key_set` 暴露。
 
 ## 编码约定

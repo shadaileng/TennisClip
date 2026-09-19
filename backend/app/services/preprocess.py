@@ -48,6 +48,7 @@ def preprocess(video_path: Path, config: AppConfig, work_dir: Optional[Path] = N
         # 因此用固定 720p 目标，而非带 if() 的复杂表达式。
         "-vf", f"scale=-2:720:flags=lanczos,fps={config.video.fps},unsharp=3:3:0.6",
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
         "-c:a", "aac", "-b:a", "128k",
         str(target),
     ])

@@ -13,10 +13,10 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, Tuple
@@ -29,6 +29,7 @@ except ImportError:  # 允许仅 Mock 模式运行
 from app.config import AppConfig
 from app.models import HighlightResult, TechnicalReport
 from app.utils.logger import get_logger
+from app.utils.media_strategies import get_strategy
 
 logger = get_logger(__name__)
 
@@ -127,6 +128,8 @@ def is_mock_mode(config: AppConfig) -> bool:
 
 def _extract_json(text: str) -> Optional[dict]:
     """从模型输出中提取 JSON（容忍 markdown 代码块包裹）。"""
+    if not text:
+        return None
     text = text.strip()
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence:
@@ -142,52 +145,37 @@ def _extract_json(text: str) -> Optional[dict]:
         return None
 
 
-def _video_to_image_frames(video_path: Path, candidates=None, max_frames: int = 30) -> list[tuple[float, str]]:
-    """将本地视频路径转为 (时间戳, base64 图像帧) 列表（OpenAI 多模态 image_url 格式）。
+def _collect_fallback_text(message) -> str:
+    """聚合 content 之外的可能承载答案的字段（推理模型的 reasoning_content / model_extra）。
 
-    OpenAI Chat Completions 支持 image_url（base64 data URI），但不支持视频直传。
-    此函数用 FFMPEG 抽帧，并为每帧记录其对应时间戳，使模型能把视觉内容映射回真实秒数。
-
-    - 给定 candidates（信号候选窗口）时：在每段窗口内均匀抽帧，让模型看到真实动作；
-    - 否则：全片均匀抽帧（回退方案）。
-    无 FFMPEG 时返回空列表（纯文本模式）。
+    部分推理模型（如 step-3.7-flash）会把最终答案放在 reasoning_content 或厂商私有字段，
+    而 message.content 为空；此处兜底收集所有字符串形式候选文本供 JSON 解析。
     """
-    from app.utils import ffmpeg
-    if not ffmpeg.is_available():
-        return []
+    parts: list[str] = []
+    rc = getattr(message, "reasoning_content", None)
+    if isinstance(rc, str) and rc.strip():
+        parts.append(rc)
+    # StepFun 等推理模型把思考放在 message.reasoning（与 reasoning_content 不同字段）
+    r = getattr(message, "reasoning", None)
+    if isinstance(r, str) and r.strip():
+        parts.append(r)
+    extra = getattr(message, "model_extra", None) or {}
+    for v in extra.values():
+        if isinstance(v, str) and v.strip():
+            parts.append(v)
+        elif isinstance(v, dict):
+            for sv in v.values():
+                if isinstance(sv, str) and sv.strip():
+                    parts.append(sv)
+    return "\n".join(parts)
+
+
+def _dump_response(response) -> str:
+    """把完整响应对象序列化为字符串（截断），便于定位空 content 等异常。"""
     try:
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            probe = ffmpeg.probe(video_path)
-            duration = probe.get("duration", 30)
-            if candidates:
-                # 在每个候选窗口内均匀抽帧，每段 per 帧，整体上限 max_frames
-                samples = []
-                per = max(1, max_frames // max(1, len(candidates)))
-                for c in candidates:
-                    s = max(0.0, float(getattr(c, "start", 0)))
-                    e = min(float(duration), float(getattr(c, "end", duration)))
-                    if e - s < 0.3:
-                        continue
-                    for k in range(per):
-                        ts = s + (e - s) * (k + 0.5) / per
-                        samples.append(ts)
-            else:
-                step = max(duration / max_frames, 1.0)
-                samples = [i * step for i in range(max_frames) if i * step < duration]
-            frames = []
-            for ts in samples[:max_frames]:
-                out = Path(tmp) / f"frame_{len(frames):03d}.jpg"
-                ffmpeg.run([
-                    "ffmpeg", "-y", "-ss", f"{ts:.2f}", "-i", str(video_path),
-                    "-frames:v", "1", "-q:v", "3", str(out),
-                ])
-                b64 = base64.b64encode(out.read_bytes()).decode()
-                frames.append((round(ts, 2), f"data:image/jpeg;base64,{b64}"))
-            return frames
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("视频抽帧失败，降级为纯文本: {}", exc)
-        return []
+        return json.dumps(response.model_dump(), ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001
+        return str(response)
 
 
 def complete_structured(
@@ -196,10 +184,12 @@ def complete_structured(
     config: AppConfig,
     schema_hint: str = "HighlightResult",
     candidates=None,
+    analysis_mode: Optional[str] = None,
 ) -> Optional[dict]:
-    """按 OpenAI Chat Completions 格式发送 Prompt（含视频帧引用），返回解析后的结构化 dict。
+    """按 OpenAI Chat Completions 格式发送 Prompt（含视频媒体引用），返回解析后的结构化 dict。
 
-    candidates: 信号定位的候选窗口（Segment 列表），用于段内抽帧与 prompt 约束。
+    candidates: 信号定位的候选窗口（Segment 列表），用于抽帧段内定位与视频模式软提示。
+    analysis_mode: 媒体输入策略（frame=抽帧 / video=视频理解）；空则取 config.llm.analysis_mode。
     """
     provider, api_key = _resolve_provider(config)
     if _is_mock_mode(config, api_key):
@@ -230,67 +220,99 @@ def complete_structured(
         max_retries=config.llm.max_retries,
     )
 
-    # 构建多模态消息（OpenAI 格式：image_url 支持 base64 data URI）
-    frames = _video_to_image_frames(
-        video_path, candidates=candidates, max_frames=config.llm.max_frames,
-    )
-    user_content = [{"type": "text", "text": prompt}]
-    if frames:
-        if candidates:
-            frame_intro = (
-                f"以下为各候选窗口内抽帧，共 {len(frames)} 帧，已标注对应时间戳（秒）。"
-                f"请据此在候选窗口 ±2s 内给出准确起止秒数。"
-            )
-        else:
-            frame_intro = (
-                f"以下为视频按时长均匀抽帧，共 {len(frames)} 帧，按时间顺序排列，"
-                f"每帧前已标注其对应时间戳（秒）。请依据各帧时间戳给出准确的起止秒数，"
-                f"不要凭空臆造视频中未出现的时间点。"
-            )
-        user_content.append({
-            "type": "text",
-            "text": frame_intro,
-        })
-        for idx, (ts, frame) in enumerate(frames):
-            user_content.append({"type": "text", "text": f"[第 {idx + 1} 帧 @ {ts:.1f}s]"})
-            user_content.append({"type": "image_url", "image_url": {"url": frame}})
+    # 媒体输入策略分发（frame 抽帧 / video 视频理解）
+    strategy = get_strategy(analysis_mode or config.llm.analysis_mode)
+    media_parts = strategy.build_media_parts(video_path, candidates, config)
+    if strategy.name == "video":
+        # 视频理解：媒体块排在文本之前（StepFun 最佳实践）
+        user_content = [*media_parts, {"type": "text", "text": prompt}]
     else:
-        user_content.append({
-            "type": "text",
-            "text": "（未能抽帧，仅基于文字描述分析）",
-        })
+        user_content = [{"type": "text", "text": prompt}, *media_parts]
 
     logger.debug(
-        "llm: 输入 prompt(前{}字)={} 帧数={} 帧时间戳={} 模型={}",
-        _MAX_LOG_CHARS, _trunc(prompt), len(frames),
-        [ts for ts, _ in frames], provider.model,
+        "llm: 输入 prompt(前{}字)={} 策略={} 媒体块数={} 模型={}",
+        _MAX_LOG_CHARS, _trunc(prompt), strategy.name, len(media_parts), provider.model,
     )
 
-    try:
-        response = client.chat.completions.create(
-            model=provider.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是网球视频分析 Agent，按用户要求输出 JSON，不输出多余文字。",
-                },
-                {
-                    "role": "user",
-                    "content": user_content,
-                },
-            ],
-            temperature=config.llm.temperature,
-            max_tokens=config.llm.max_tokens,
+    messages = [
+        {
+            "role": "system",
+            "content": "你是网球视频分析 Agent，按用户要求输出 JSON，不输出多余文字。",
+        },
+        {
+            "role": "user",
+            "content": user_content,
+        },
+    ]
+    # 结构化抽取无需长链推理；StepFun 的 Chat Completions 端点用 reasoning_effort 控制推理强度
+    # （"low" 即为最小推理，enable_thinking 仅百炼托管版生效，这里两者都传以兼容不同部署）。
+    # 关闭/压低推理可避免推理 token 耗尽导致 length 截断，也更省时省钱。
+    reasoning_effort = "low" if not config.llm.enable_thinking else "medium"
+    extra_body = {
+        "enable_thinking": config.llm.enable_thinking,
+        "reasoning_effort": reasoning_effort,
+    }
+    max_tokens = config.llm.max_tokens
+    response = None
+    parsed = None
+    video_retries = 2  # StepFun 视频解码瞬时失败（video_exception/conn closed）的重试次数
+    for v_attempt in range(video_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=provider.model,
+                messages=messages,
+                temperature=config.llm.temperature,
+                max_tokens=max_tokens,
+                extra_body=extra_body,
+            )
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            is_video_infra = (
+                "video_exception" in msg or "conn is closed" in msg or "ReadFrame" in msg
+            )
+            if is_video_infra and v_attempt < video_retries:
+                logger.warning(
+                    "llm: StepFun 视频解码瞬时失败（{}/{}），2s 后重试：{}",
+                    v_attempt + 1, video_retries, msg[:200],
+                )
+                time.sleep(2)
+                continue
+            logger.error(
+                "llm: 调用失败 provider={} model={} base_url={}：{}",
+                provider.name, provider.model, provider.base_url, exc,
+            )
+            raise
+        message = response.choices[0].message
+        content = message.content
+        logger.debug("llm: 输出 content(前{}字)={} 模型={}", _MAX_LOG_CHARS, _trunc(content), provider.model)
+        parsed = _extract_json(content)
+        if parsed is None:
+            # 推理模型偶把答案置于 reasoning / reasoning_content / model_extra 而 content 为空，兜底解析
+            fallback = _collect_fallback_text(message)
+            if fallback:
+                parsed = _extract_json(fallback)
+                if parsed is not None:
+                    logger.warning(
+                        "llm: content 为空，已从 reasoning/model_extra 兜底解析成功 模型={}",
+                        provider.model,
+                    )
+        if parsed is not None:
+            break
+        reason = getattr(response.choices[0], "finish_reason", None)
+        if reason == "length" and max_tokens < 32768:
+            # 推理预算耗尽被截断（reasoning 模型 max_tokens 不足）：提高上限重试
+            max_tokens = min(max_tokens * 2, 32768)
+            logger.warning(
+                "llm: finish_reason=length，提高 max_tokens 至 {} 重试 模型={}",
+                max_tokens, provider.model,
+            )
+            continue
+        # 仍无可解析 JSON：转储原始响应，定位 StepFun 空 content（内容审核/超长/异常）根因
+        logger.warning(
+            "llm: 返回 content 为空或无法解析（finish_reason={}），原始响应(前{}字)={} 模型={}",
+            reason, _MAX_LOG_CHARS, _trunc(_dump_response(response)), provider.model,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "llm: 调用失败 provider={} model={} base_url={}：{}",
-            provider.name, provider.model, provider.base_url, exc,
-        )
-        raise
-    content = response.choices[0].message.content
-    logger.debug("llm: 输出 content(前{}字)={} 模型={}", _MAX_LOG_CHARS, _trunc(content), provider.model)
-    parsed = _extract_json(content)
+        break
     logger.debug("llm: 解析结果(前{}字)={} 模型={}", _MAX_LOG_CHARS, _trunc(parsed), provider.model)
     return parsed
 
