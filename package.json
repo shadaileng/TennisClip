@@ -5,6 +5,8 @@
   "type": "module",
   "description": "TennisClip AI 总项目：根目录托管 VitePress 文档站（docs/），含 backend/ 与 frontend/ 子项目",
   "scripts": {
+    "dev:backend": "cd backend && uv run uvicorn app.main:app",
+    "dev:frontend": "cd frontend && pnpm dev",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
