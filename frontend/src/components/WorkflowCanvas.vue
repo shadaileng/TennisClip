@@ -92,7 +92,7 @@ function onCanvasMouseDown(e) {
   }
 }
 
-function onCanvasMouseMove(e) {
+function onDocMouseMove(e) {
   if (isPanning.value) {
     pan.x = e.clientX - panStart.x
     pan.y = e.clientY - panStart.y
@@ -113,7 +113,7 @@ function onCanvasMouseMove(e) {
   }
 }
 
-function onCanvasMouseUp() {
+function onDocMouseUp() {
   isPanning.value = false
   dragNode.value = null
   if (connecting.active) connecting.active = false
@@ -245,8 +245,10 @@ function autoLayout() {
   nextTick(measurePorts)
 }
 
-// ──────── Init ────────
+// ──────── Lifecycle ────────
 onMounted(() => {
+  document.addEventListener('mousemove', onDocMouseMove)
+  document.addEventListener('mouseup', onDocMouseUp)
   // Ensure nodes have positions
   if (store.draft) {
     store.draft.graph.nodes.forEach((n, i) => {
@@ -258,6 +260,11 @@ onMounted(() => {
     if (rect) { pan.x = rect.width * 0.1; pan.y = rect.height * 0.05 }
     nextTick(measurePorts)
   }, 100)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', onDocMouseMove)
+  document.removeEventListener('mouseup', onDocMouseUp)
 })
 
 // ──────── Node colors ────────
@@ -333,9 +340,6 @@ const paletteOpen = ref(false)
       <!-- Canvas -->
       <div ref="canvasRef" class="flex-1 relative cursor-grab overflow-hidden"
         @mousedown="onCanvasMouseDown"
-        @mousemove="onCanvasMouseMove"
-        @mouseup="onCanvasMouseUp"
-        @mouseleave="onCanvasMouseUp"
         @wheel.prevent="onWheel"
         :class="{ 'cursor-grabbing': isPanning }"
         style="background-image: radial-gradient(circle, #1e293b 1px, transparent 1px); background-size: 20px 20px;">
