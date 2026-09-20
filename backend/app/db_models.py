@@ -238,6 +238,31 @@ class FileRecord(Base):
         return f"<FileRecord {self.kind} {self.file_path}>"
 
 
+class Workflows(Base):
+    """可编排工作流：图 JSON + 元信息（内置/启用/排序）。
+
+    graph_json 存储 WorkflowGraph.to_dict() 的 JSON 字符串，
+    含 nodes + edges，前端可直接解析渲染。
+    """
+
+    __tablename__ = "workflows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    graph_json: Mapped[str] = mapped_column(Text, nullable=False)  # WorkflowGraph.to_dict() JSON
+    is_builtin: Mapped[int] = mapped_column(Integer, default=0)  # 1=内置，不可删/改
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    def __repr__(self) -> str:
+        return f"<Workflows {self.name} builtin={self.is_builtin}>"
+
+
 def _seed_providers(config: "AppConfig") -> list[AiProvider]:
     """从传入 config 的 providers 列表导入种子（若表为空）。
 
