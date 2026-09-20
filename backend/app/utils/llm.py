@@ -185,6 +185,7 @@ def complete_structured(
     schema_hint: str = "HighlightResult",
     candidates=None,
     analysis_mode: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> Optional[dict]:
     """按 OpenAI Chat Completions 格式发送 Prompt（含视频媒体引用），返回解析后的结构化 dict。
 
@@ -192,6 +193,8 @@ def complete_structured(
     analysis_mode: 媒体输入策略（frame=抽帧 / video=视频理解）；空则取 config.llm.analysis_mode。
     """
     provider, api_key = _resolve_provider(config)
+    if model_override:
+        provider.model = model_override
     if _is_mock_mode(config, api_key):
         logger.info(
             "llm: 进入 mock 模式（schema={}），未实际调用模型 provider={} model={}",

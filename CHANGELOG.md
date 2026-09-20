@@ -4,6 +4,23 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.10.0] - 2026-09-20
+
+### Added
+
+- 工作流执行集成：`_process_one` 检查 `workflow.default_graph_id`，有激活工作流时自动走 `Executor.execute()`，否则回落旧 `run_pipeline`
+- `edit.concat` 节点新增 `highlight` 透传输出端口，供下游节点消费高光数据
+- `analyze.highlight` 节点新增 `model` 参数，支持从数据库服务商表动态选择 LLM 模型
+- 执行器兜底投影：若 `output.artifact` 未收到 `highlight` 输入，自动从上下文输出中查找并注入
+- 前端工作流激活：画布编辑器顶部「⚡ 激活」按钮 + 预设列表悬停激活 + 成功提示
+- 09 方案文档 v2.0.0：新增工作流使用说明（快速上手/对比表/执行优先级/连接规则/FAQ）
+
+### Fixed
+
+- `video_editor.py` 修复 ffmpeg `-t` 标志位置：从 `-i` 之后移到 `-i` 之前，修复 `Error opening input file -t`
+- `TaskCard.vue` 修复工作流模式下结果不显示：`showResults` 增加 `highlight_video_path` 兜底检查
+- `workflow store` 修复 `newDraft` 加载已保存工作流时 `graph` 为 undefined 的崩溃：改为 async 并通过 `api.getWorkflow(id)` 获取完整图数据
+
 ## [0.9.0] - 2026-09-19
 
 ### Added

@@ -25,6 +25,7 @@ from app.core import run_pipeline
 from app.routers import upload as upload_router
 from app.routers import workflows as workflows_router
 from app.services import db_service, upload_service
+import app.workflow.nodes  # noqa: F401 — 触发所有内置节点注册（工作流执行器依赖）
 
 # 尽早接管日志（含 uvicorn 内置日志），保证启动期日志统一格式输出
 setup_logging()
@@ -132,10 +133,38 @@ def _process_one(
         result = TaskResult(task_id=task_id, source_video=str(video_path))
     started = time.monotonic()
     try:
-        run_pipeline(
-            video_path, config, result, level=level,
-            analysis_mode=analysis_mode, enabled_stages=enabled_stages,
-        )
+        # 检查是否有激活的工作流（优先级：workflow.default_graph_id > legacy 管线）
+        from app.services import config_service
+        from app.workflow.spec import get_fn  # noqa: F811 — 确保节点已注册
+
+        wf_graph = None
+        with db_service.session() as s:
+            wf_cfg = config_service.get_workflow_config(s, config)
+            graph_id_str = wf_cfg.get("default_graph_id")
+
+            if graph_id_str:
+                try:
+                    graph_id = int(graph_id_str)
+                    from app.services import workflow_service
+                    from app.workflow.graph import WorkflowGraph
+                    wf = workflow_service.get_workflow(s, graph_id)
+                    if wf is not None:
+                        import json as _json
+                        graph_dict = _json.loads(wf.graph_json)
+                        wf_graph = WorkflowGraph.from_dict(graph_dict)
+                        logger.info("workflow: 使用激活工作流 id={} name={}", graph_id, wf.name)
+                except (ValueError, TypeError):
+                    pass
+
+        if wf_graph is not None:
+            from app.workflow.executor import Executor
+            executor = Executor(wf_graph, config, result, level=level)
+            executor.execute(video_path)
+        else:
+            run_pipeline(
+                video_path, config, result, level=level,
+                analysis_mode=analysis_mode, enabled_stages=enabled_stages,
+            )
     finally:
         result.elapsed_seconds = time.monotonic() - started
     return result

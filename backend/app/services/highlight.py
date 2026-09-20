@@ -44,6 +44,7 @@ def find_highlights(
     duration_seconds: Optional[float] = None,
     level: str = "intermediate",
     analysis_mode: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> HighlightResult:
     """识别高光回合，返回结构化时间戳。
 
@@ -88,6 +89,7 @@ def find_highlights(
         schema_hint="HighlightResult",
         candidates=prompt_cands,
         analysis_mode=analysis_mode,
+        model_override=model,
     )
     if result is None:
         raise RuntimeError("LLM 未返回结构化结果")

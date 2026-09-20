@@ -17,6 +17,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const loading = ref(false)
   // 错误信息
   const error = ref('')
+  // 成功信息
+  const success = ref('')
 
   /** 加载节点 Schema */
   async function loadSchema() {
@@ -51,17 +53,23 @@ export const useWorkflowStore = defineStore('workflow', () => {
     draft.value = null
     validation.value = { ok: true, errors: [] }
     error.value = ''
+    success.value = ''
   }
 
   /** 新建草稿（从零开始或复制已有工作流） */
-  function newDraft(copyFrom = null) {
+  async function newDraft(copyFrom = null) {
     if (copyFrom) {
-      const g = JSON.parse(JSON.stringify(copyFrom.graph))
+      // list items don't have graph; fetch full details if needed
+      let wfData = copyFrom
+      if (!copyFrom.graph) {
+        wfData = await api.getWorkflow(copyFrom.id)
+      }
+      const g = JSON.parse(JSON.stringify(wfData.graph))
       // Ensure nodes have positions
       g.nodes.forEach((n, i) => {
         if (n._x === undefined) { n._x = 80 + (i % 4) * 260; n._y = 80 + Math.floor(i / 4) * 160 }
       })
-      draft.value = { id: copyFrom.id, name: copyFrom.name + '（副本）', graph: g }
+      draft.value = { id: wfData.id, name: wfData.name + '（副本）', graph: g }
     } else {
       draft.value = {
         name: '新工作流',
@@ -133,6 +141,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
     try {
       await api.activateWorkflow(id)
       await loadWorkflows()
+      error.value = ''
+      success.value = '工作流已激活'
+      setTimeout(() => { success.value = '' }, 3000)
     } catch (e) {
       error.value = e.message
     }
@@ -151,7 +162,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
   /** 导出 JSON */
   function exportJson() {
     if (!draft.value) return
-    const blob = new Blob([JSON.stringify(draft.value.graph, null, 2)], { type: 'application/json' })
+    // Sync workflow name into graph before export
+    const exportData = { ...draft.value.graph, name: draft.value.name || draft.value.graph.name }
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `${draft.value.name || 'workflow'}.json`
@@ -190,6 +203,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     panelOpen,
     loading,
     error,
+    success,
     loadSchema,
     loadWorkflows,
     open,

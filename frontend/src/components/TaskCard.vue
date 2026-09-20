@@ -17,7 +17,7 @@ const isTerminal = computed(() =>
   !task.value || ['succeeded', 'failed', 'timeout'].includes(task.value.status)
 )
 const showResults = computed(
-  () => task.value?.status === 'succeeded' && (task.value.highlight || task.value.report)
+  () => task.value?.status === 'succeeded' && (task.value.highlight || task.value.report || task.value.highlight_video_path)
 )
 
 // 处理阶段步骤条（与后端 run_pipeline 的 stage 对齐）

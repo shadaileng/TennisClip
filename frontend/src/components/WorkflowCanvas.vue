@@ -11,7 +11,8 @@ const zoom = ref(1)
 const isPanning = ref(false)
 const panStart = reactive({ x: 0, y: 0 })
 
-// ──────── Node dragging ────────
+// ──────── Selection & Node dragging ────────
+const selectedNodeId = ref(null)
 const dragNode = ref(null)
 const dragOffset = reactive({ x: 0, y: 0 })
 
@@ -177,6 +178,11 @@ function onInputPortMouseUp(e, nodeId, portName, portType) {
 
 function removeEdge(idx) { store.draft.graph.edges.splice(idx, 1) }
 
+async function activateCurrent() {
+  if (!store.draft?.id) return
+  await store.activate(store.draft.id)
+}
+
 function removeNode(id) {
   store.draft.graph.nodes = store.draft.graph.nodes.filter((n) => n.id !== id)
   store.draft.graph.edges = store.draft.graph.edges.filter((e) => e.from[0] !== id && e.to[0] !== id)
@@ -299,6 +305,7 @@ const paletteOpen = ref(false)
         <button class="rounded bg-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-600" @click="autoLayout">📐 排版</button>
         <button class="rounded bg-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-600" @click="store.validateDraft()">✓ 校验</button>
         <button class="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500" @click="store.saveDraft()" :disabled="store.loading">💾 保存</button>
+        <button v-if="store.draft?.id" class="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-500" @click="activateCurrent()" :disabled="store.loading">⚡ 激活</button>
         <button class="rounded bg-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-600" @click="store.exportJson()">📤 导出</button>
         <button class="rounded bg-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-600" @click="store.close()">✕ 关闭</button>
       </div>
@@ -308,6 +315,7 @@ const paletteOpen = ref(false)
       <span v-for="(err, i) in store.validation.errors" :key="i" class="mr-3">[{{ err.code }}] {{ err.message }}</span>
     </div>
     <div v-else-if="store.error" class="border-b border-red-800 bg-red-900/30 px-4 py-1 text-xs text-red-300 z-10">{{ store.error }}</div>
+    <div v-else-if="store.success" class="border-b border-emerald-800 bg-emerald-900/30 px-4 py-1 text-xs text-emerald-300 z-10">{{ store.success }}</div>
 
     <!-- Main area -->
     <div class="flex flex-1 overflow-hidden">
@@ -327,9 +335,12 @@ const paletteOpen = ref(false)
         <div class="border-t border-slate-700 p-2">
           <div class="mb-1 text-[10px] uppercase text-slate-500 px-1">预设</div>
           <button class="mb-1 w-full rounded bg-slate-800 px-2 py-1 text-[11px] text-slate-400 hover:bg-slate-700" @click="store.newDraft()">+ 新建空白</button>
-          <div v-for="wf in store.workflows" :key="wf.id" class="mb-0.5 flex items-center justify-between rounded px-2 py-1 text-[11px] hover:bg-slate-800 cursor-pointer" :class="wf.is_active ? 'text-emerald-400' : 'text-slate-400'" @click="store.newDraft(wf)">
+          <div v-for="wf in store.workflows" :key="wf.id" class="mb-0.5 flex items-center justify-between rounded px-2 py-1 text-[11px] hover:bg-slate-800 cursor-pointer group" :class="wf.is_active ? 'text-emerald-400' : 'text-slate-400'" @click="store.newDraft(wf)">
             <span class="truncate">{{ wf.name }}<span v-if="wf.is_active" class="ml-1">●</span></span>
-            <button v-if="!wf.is_builtin" class="text-slate-600 hover:text-red-400" @click.stop="store.remove(wf.id)">✕</button>
+            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button v-if="!wf.is_active" class="text-slate-600 hover:text-emerald-400" title="激活此工作流" @click.stop="store.activate(wf.id)">⚡</button>
+              <button v-if="!wf.is_builtin" class="text-slate-600 hover:text-red-400" @click.stop="store.remove(wf.id)">✕</button>
+            </div>
           </div>
         </div>
         <div class="border-t border-slate-700 p-2 text-[10px] text-slate-500">
@@ -423,6 +434,35 @@ const paletteOpen = ref(false)
                     @mousedown="onOutputPortMouseDown($event, node.id, port.name, port.type)"
                   ></div>
                 </div>
+              </div>
+            </div>
+
+            <!-- Params -->
+            <div v-if="(nodeSchema(node.type)?.params || []).length" class="border-t border-slate-700/50 px-2 py-1 space-y-1">
+              <div v-for="p in nodeSchema(node.type).params" :key="p.key" class="flex items-center gap-1">
+                <label class="text-[9px] text-slate-500 w-14 shrink-0 truncate" :title="p.description">{{ p.label }}</label>
+                <select v-if="p.type === 'select'"
+                  :value="node.params[p.key] ?? p.default"
+                  @change="node.params[p.key] = $event.target.value"
+                  class="flex-1 min-w-0 rounded bg-slate-800 border border-slate-600 px-1 py-0.5 text-[10px] text-slate-200 outline-none focus:border-emerald-500">
+                  <option value="">默认</option>
+                  <option v-for="opt in (p.options || [])" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
+                <input v-else-if="p.type === 'int' || p.type === 'float'"
+                  type="number"
+                  :value="node.params[p.key] ?? p.default"
+                  @input="node.params[p.key] = Number($event.target.value)"
+                  :min="p.min" :max="p.max"
+                  class="flex-1 min-w-0 rounded bg-slate-800 border border-slate-600 px-1 py-0.5 text-[10px] text-slate-200 outline-none focus:border-emerald-500" />
+                <input v-else-if="p.type === 'bool'"
+                  type="checkbox"
+                  :checked="node.params[p.key] ?? p.default"
+                  @change="node.params[p.key] = $event.target.checked"
+                  class="accent-emerald-500" />
+                <input v-else
+                  :value="node.params[p.key] ?? p.default"
+                  @input="node.params[p.key] = $event.target.value"
+                  class="flex-1 min-w-0 rounded bg-slate-800 border border-slate-600 px-1 py-0.5 text-[10px] text-slate-200 outline-none focus:border-emerald-500" />
               </div>
             </div>
 

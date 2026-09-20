@@ -93,8 +93,8 @@ def edit_highlight_video(
             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(out),
         ]
         if not all_mode:
-            # -t 作为输出选项置于 -i 之后、编码参数之前
-            cmd = cmd[:3] + ["-t", str(config.highlight.target_duration)] + cmd[3:]
+            # -t 作为输入选项置于 -i 之前
+            cmd = cmd[:2] + ["-t", str(config.highlight.target_duration)] + cmd[2:]
         ffmpeg.run(cmd)
     else:
         list_file = out.parent / f"{source.stem}_concat.txt"
@@ -106,8 +106,8 @@ def edit_highlight_video(
             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(out),
         ]
         if not all_mode:
-            # -t 作为输出选项置于 -i <list_file> 之后、编码参数之前
-            cmd = cmd[:7] + ["-t", str(config.highlight.target_duration)] + cmd[7:]
+            # -t 作为输入选项置于 -i 之前
+            cmd = cmd[:6] + ["-t", str(config.highlight.target_duration)] + cmd[6:]
         ffmpeg.run(cmd)
         list_file.unlink(missing_ok=True)
 
