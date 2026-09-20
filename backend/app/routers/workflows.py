@@ -12,6 +12,7 @@ from app.services import workflow_service
 from app.utils.logger import get_logger
 from app.workflow.spec import build_schema
 from app.workflow.graph import WorkflowGraph
+import app.workflow.nodes  # noqa: F401 — 触发所有内置节点注册
 
 logger = get_logger(__name__)
 
