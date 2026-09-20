@@ -101,6 +101,7 @@ TennisClip/
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |
+| GET | `/api/v1/db/tasks/{task_id}` | 单任务完整结果（从数据库重建：highlight/report JSON + 文件路径，历史查看不依赖内存队列） |
 | GET | `/api/v1/db/providers` | 模型服务商列表（数据库；字段 id/name/base_url/**api_key(掩码)**/models/default_model/enabled/sort_order/is_selected） |
 | POST | `/api/v1/db/providers` | 新增服务商（body: name/base_url/api_key/models/enabled/sort_order；重复名 409、base_url 须 http(s)、models 至少 1 项） |
 | PUT | `/api/v1/db/providers/{id}` | 编辑服务商（按 id 定位；api_key 留空表示保留原值；重复名 409） |

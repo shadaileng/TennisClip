@@ -302,10 +302,22 @@ def db_task_history(limit: int = 50) -> list[dict]:
 
 @app.get("/api/v1/db/tasks/{task_id}")
 def db_task_detail(task_id: str) -> dict:
-    """单个任务完整结果（从数据库重建，历史查看不依赖内存队列）。"""
+    """单个任务完整结果：优先数据库，兜底内存队列（兼容旧任务 highlight/report 未落库的情况）。"""
     detail = db_service.get_task_detail(task_id)
     if not detail:
         raise HTTPException(status_code=404, detail="task not found")
+
+    # 数据库中 highlight/report 为空时，尝试从内存队列补充（旧任务兼容）
+    if not detail.get("highlight") or not detail.get("report"):
+        try:
+            queued = queue.get(task_id)
+            if not detail.get("highlight") and queued.highlight:
+                detail["highlight"] = queued.highlight.model_dump()
+            if not detail.get("report") and queued.report:
+                detail["report"] = queued.report.model_dump()
+        except KeyError:
+            pass
+
     return detail
 
 
