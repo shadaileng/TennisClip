@@ -1,13 +1,16 @@
 <script setup>
 import { onMounted, onBeforeUnmount } from 'vue'
 import { useTaskStore } from './stores/task'
+import { useWorkflowStore } from './stores/workflow'
 import HealthBar from './components/HealthBar.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import TaskCard from './components/TaskCard.vue'
 import ProviderManageModal from './components/ProviderManageModal.vue'
 import StrategyModal from './components/StrategyModal.vue'
+import WorkflowPanel from './components/WorkflowPanel.vue'
 
 const store = useTaskStore()
+const wfStore = useWorkflowStore()
 
 onMounted(() => {
   store.checkHealth()
@@ -52,6 +55,13 @@ function onUnload() {
         >
           策略设置
         </button>
+        <button
+          type="button"
+          class="rounded-lg border border-blue-500/50 px-3 py-1.5 text-xs font-medium text-blue-300 transition hover:border-blue-400 hover:bg-blue-500/10"
+          @click="wfStore.open()"
+        >
+          工作流
+        </button>
       </div>
     </header>
 
@@ -76,5 +86,6 @@ function onUnload() {
 
     <ProviderManageModal :open="store.managing" @close="store.closeManage()" />
     <StrategyModal :open="store.strategizing" @close="store.closeStrategy()" />
+    <WorkflowPanel />
   </div>
 </template>

@@ -200,4 +200,70 @@ export const api = {
     })
     return parse(res)
   },
+
+  // ---- 工作流 ----
+
+  // 节点目录 Schema（前端渲染依据）
+  async workflowSchema() {
+    const res = await fetch(url('/api/v1/workflows/schema'))
+    return parse(res)
+  },
+
+  // 工作流列表（含 is_active 标记）
+  async listWorkflows() {
+    const res = await fetch(url('/api/v1/workflows'))
+    return parse(res)
+  },
+
+  // 获取单个工作流详情
+  async getWorkflow(id) {
+    const res = await fetch(url(`/api/v1/workflows/${encodeURIComponent(id)}`))
+    return parse(res)
+  },
+
+  // 新建工作流
+  async createWorkflow(payload) {
+    const res = await fetch(url('/api/v1/workflows'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return parse(res)
+  },
+
+  // 更新工作流
+  async updateWorkflow(id, payload) {
+    const res = await fetch(url(`/api/v1/workflows/${encodeURIComponent(id)}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return parse(res)
+  },
+
+  // 删除工作流
+  async deleteWorkflow(id) {
+    const res = await fetch(url(`/api/v1/workflows/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+    })
+    return parse(res)
+  },
+
+  // 激活工作流
+  async activateWorkflow(id) {
+    const res = await fetch(url(`/api/v1/workflows/${encodeURIComponent(id)}/activate`), {
+      method: 'POST',
+    })
+    return parse(res)
+  },
+
+  // 校验草稿图（不落库）
+  async validateWorkflow(graph) {
+    const res = await fetch(url('/api/v1/workflows/validate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ graph }),
+    })
+    return parse(res)
+  },
 }
