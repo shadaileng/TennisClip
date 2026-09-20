@@ -19,7 +19,15 @@ TennisClip/
 │   │   ├── core.py           # 全链路流水线（各节点同步落库）
 │   │   ├── db.py             # 数据库引擎/会话（Alembic 迁移 + create_all 兜底）
 │   │   ├── db_models.py      # ORM 表结构（Alembic autogenerate 的目标元数据）
-│   │   ├── services/         # preprocess / highlight / video_editor / report / db_service
+│   │   ├── config_registry.py # 配置项注册表（最小集）
+│   │   ├── services/         # preprocess / highlight / video_editor / report / db_service / workflow_service / config_service
+│   │   ├── routers/          # upload / workflows（FastAPI 路由）
+│   │   ├── workflow/         # 可编排工作流系统
+│   │   │   ├── spec.py       # 节点契约：端口类型、参数 Schema、注册表
+│   │   │   ├── graph.py      # 图结构：节点 + 边 + 校验（R1~R10）+ Kahn 拓扑排序
+│   │   │   ├── executor.py   # 执行器：Context 传值 + stage 上报 + 产物投影
+│   │   │   ├── presets.py    # 预置编译器：compile_from_legacy / compile_from_config
+│   │   │   └── nodes/        # 9 个内置节点（input.video / preprocess.transcode / ...）
 │   │   └── utils/            # ffmpeg / llm / tasks / logger / media_strategies（视频理解策略）
 │   ├── alembic/              # 数据库迁移（env.py + versions/*.py，迁移脚本入库）
 │   ├── alembic.ini           # Alembic 配置（连接串由 env.py 动态解析，不写死）
@@ -101,16 +109,34 @@ TennisClip/
 | GET | `/api/v1/config` | 配置 KV 列表（ai.* 服务商配置；**pipeline 类**：`highlight.level`/`llm.analysis_mode`/`pipeline.stages`；select 项含动态选项、secret 掩码、source 标明 db/config/env/builtin） |
 | PUT | `/api/v1/config/{key}` | 设置配置覆盖（如 `ai.provider` 切换服务商、`ai.model` 覆盖模型；**`pipeline.stages` 写入时校验 JSON 数组且元素 ∈ {preprocess,highlight,edit,report}，非法返回 400**；secret 空值=保留、等于默认值=自动删行） |
 | DELETE | `/api/v1/config/{key}` | 删除配置覆盖（恢复默认值） |
+| GET | `/api/v1/workflows` | 工作流预设列表（含 `is_active` 标记） |
+| GET | `/api/v1/workflows/schema` | 节点目录 + 端口 + 参数 Schema（前端渲染依据） |
+| POST | `/api/v1/workflows` | 新增工作流（图非法 400；重名 409） |
+| GET | `/api/v1/workflows/{id}` | 工作流详情（含 graph JSON） |
+| PUT | `/api/v1/workflows/{id}` | 更新工作流（内置 403；图非法 400） |
+| DELETE | `/api/v1/workflows/{id}` | 删除工作流（内置/激活中 409） |
+| POST | `/api/v1/workflows/{id}/activate` | 激活工作流（写入 `workflow.default_graph_id`） |
+| POST | `/api/v1/workflows/validate` | 草稿校验（不落库），返回 `{ok, errors}` |
 
 模型服务商以 OpenAI 兼容三要素（`base_url` / `api_key` / `models`）在 `backend/config.yaml` 的 `llm.providers` 声明（`models` 优先，缺省由 `model` 包装为单元素列表），通过 `llm.active_provider` 切换；该结构已落地到数据库 `ai_providers` 表（纯凭据目录：`id` 主键、`name` 唯一、`enabled` 用 int、无 `is_active`/`selected_model`）。`api_key` **直接入库明文**、列表/详情接口以掩码返回（**前 3 + 末 4 位**，如 `sk-****cdef`），管理页用密码框填写；每个服务商可配多个模型（`models` JSON 列表，首项为 `default_model`）。未配置 API Key 时 LLM 客户端自动回退 **Mock 模式**（`llm.mock_mode: auto`）。
 
 - 激活服务商与选定模型不再存于 provider 行内，而是由 `system_config` 配置 KV 表覆盖：`ai.provider`（直选生效服务商，值可为某服务商名或 `custom`）、`ai.model`（覆盖所选服务商的默认模型，空=跟随默认）；另含 `ai.api_key`/`ai.base_url` 供 `custom` 独立配置。配置 KV 子系统由 `app/config_registry.py`（最小注册表）+ `app/services/config_service.py`（`get_ai_config`/`mask_secret`/配置覆盖）封装。
 - 生效服务商的唯一事实来源为配置 KV `ai.provider`：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均经 `config_service.get_ai_config(config)` 解析——命中启用服务商则引用其 `api_key`/`base_url`、`model` 取 `ai.model` 覆盖或 `default_model`，否则回落静态 `config.active_provider`（DB 故障返回 `None` 由调用方降级，继续回落静态配置）。原 `db_service.get_active_provider()` 已移除。
 - 管线全局策略同样走配置 KV 子系统（**不新增表、不需 Alembic 迁移**），由前端「策略调整」模态框（`frontend/src/components/StrategyModal.vue`）一键持久化，影响之后所有任务：
-  - `highlight.level`（分析层级：beginner/intermediate/professional/all，默认 intermediate）— 高光识别与报告的分析深度，`all`=所有高光回合（仅剪辑拼接、不生成技术分析报告）。
-  - `llm.analysis_mode`（高光识别媒体输入策略：frame=抽帧/video=视频理解，默认 frame）— 经 `app/utils/media_strategies.py` 的策略注册表分发；`video` 模式将整段 MP4 以 `data:video/mp4;base64,...` 内联为单个 `video_url` 块直送（置于文本之前），>128MB 仅 `logger.warning` 不切片，候选窗口作为软提示（模型自由定位），后处理仅做时长合法性 + 准备段过滤；`frame` 模式保持原抽帧行为零回归。`report` 固定 `analysis_mode="frame"` 不受影响。
+  - `llm.analysis_level`（分析层级：beginner/intermediate/professional/all，默认 intermediate）— 高光识别与报告的分析深度，`all`=所有高光回合（仅剪辑拼接、不生成技术分析报告）。
+  - `llm.highlight_strategy`（高光识别媒体输入策略：frame=抽帧/video=视频理解，默认 frame）— 经 `app/utils/media_strategies.py` 的策略注册表分发；`video` 模式将整段 MP4 以 `data:video/mp4;base64,...` 内联为单个 `video_url` 块直送（置于文本之前），>128MB 仅 `logger.warning` 不切片，候选窗口作为软提示（模型自由定位），后处理仅做时长合法性 + 准备段过滤；`frame` 模式保持原抽帧行为零回归。`report` 固定 `analysis_mode="frame"` 不受影响。
   - `pipeline.stages`（启用的管线阶段有序 JSON 数组，默认 `["preprocess","highlight","edit","report"]`）— `config_service.set_config_value` 校验 JSON 数组且元素 ∈ 合法集合（非法 400），解析时按固定顺序重排。
   - 三项生效值统一由 `config_service.get_pipeline_config(db, config)` 解析（DB 覆盖 > 默认值），在 `main.process_video` 解析后透传 `core.run_pipeline(analysis_mode=, enabled_stages=)`。
+- **可编排工作流系统**（`app/workflow/`）：用户可自定义 DAG 工作流，取代固定四阶段管线。
+  - **节点契约**（`spec.py`）：`Port`（类型化端口）、`ParamSpec`（参数 Schema 驱动前端表单）、`NodeSpec`（完整节点规范）、`@register` 装饰器（导入即注册）。
+  - **图结构**（`graph.py`）：`WorkflowGraph` 含节点列表 + 有向边 + 校验（R1~R10 十项规则）+ Kahn 拓扑排序；`frozen` 属性锁定预置图。
+  - **执行器**（`executor.py`）：`Context` 传值 + stage 上报 + 产物投影（`output.artifact` 节点写回 `TaskResult`）。
+  - **预置编译器**（`presets.py`）：`compile_from_legacy(stages, strategy, level)` 将旧管线三元组编译为 `WorkflowGraph`；`compile_from_config(db, config)` 读取配置 KV 后委托编译。编译产出的图 `frozen=True`，禁止修改。
+  - **9 个内置节点**：`input.video`（视频输入）、`preprocess.transcode`（预处理转码）、`detect.candidates`（信号候选定位）、`analyze.highlight`（LLM 高光识别）、`post.filter_segments`（片段过滤）、`post.uniform_slices`（均匀切片兜底）、`edit.concat`（剪辑合成）、`report.technical`（技术分析报告）、`output.artifact`（产物投影）。
+  - **持久化**：`workflows` 表（name/graph_json/is_builtin/enabled），Alembic 迁移；`workflow_service.py` CRUD + 激活 + 种子。内置工作流（`is_builtin=1`）不可删除/修改。
+  - **API**：`GET /api/v1/workflows/schema`（节点目录）、`GET/POST/PUT/DELETE /api/v1/workflows`（CRUD）、`POST /{id}/activate`、`POST /validate`（草稿校验不落库）。
+  - **运行时取值优先级**：显式 `workflow_id` > 激活工作流 > 由三 KV 编译的默认图。
+  - **前端**：`WorkflowPanel.vue` 右侧滑出面板（预设列表 + 节点目录 + 参数表单 + JSON 导入导出），App.vue 头部「工作流」按钮。
 - 管线阶段化（`app/core.py` 的 `run_pipeline`）：固定顺序 `[preprocess, highlight, edit, report]`，按 `enabled_stages` 集合启用/停用；依赖校验（`_validate_enabled_stages`）要求高光识别/剪辑/报告 依赖 预处理、剪辑/报告 依赖 高光识别（非法组合抛清晰 ValueError，任务判 FAILED），保证阶段编排安全。新增节点保持该契约。
 - 启动环境自检（`app/utils/environment.py` 的 `run_startup_checks`）在 FastAPI 启动时执行一次，结果存入 `app.state.environment_checks` 并映射到 `/health` 的 `environment` 字段；任一项不通过仅 `logger.warning`、不阻断启动。`environment` 含四项：`ffmpeg`（探测 ffmpeg/ffprobe，ok/fail）、`database`（按 `config.database.url` 建连并执行 `SELECT 1` ping，ok/fail）、`provider`（优先 DB `ai.provider` 配置引用，关键字段缺失/无法解析判 fail，无 API Key 且 `mock_mode=auto` 判 warn、否则 fail）、`data_dir`（目录可创建且可写，ok/fail）。各 `detail` 不回显凭据：数据库连接串 `@` 前部分（用户名/密码）已剥离，API Key 仅以布尔 `api_key_set` 暴露。
 
@@ -127,6 +153,7 @@ TennisClip/
   - 连接串与 ORM 元数据由 `alembic/env.py` 动态解析（`DATABASE_URL` > `config.yaml`），与运行时同源；勿在 `alembic.ini` 写死 URL。
   - 新增表/列/索引：改 `app/db_models.py` 的 ORM → 跑 `alembic revision --autogenerate` → 审查生成的 `alembic/versions/*.py` 后 `upgrade head`。
 - 全链路逻辑集中在 `app/core.py`，各节点结果同步落库；新增节点保持该契约。
+- **可编排工作流**：新增节点类型须在 `app/workflow/nodes/` 下新建模块，用 `@register(NodeSpec(...))` 装饰器注册；节点函数签名统一为 `run(ctx, params) -> dict[port, value]`；节点是 services 的薄封装，不重复业务逻辑。图校验规则 R1~R10 在 `graph.py` 的 `validate()` 中执行，不抛异常、返回结构化结果。
 - Prompt 模板集中在 `prompts/`（网球教学知识库注入点），勿散落在 service 内。
 - 视频处理依赖系统 FFMPEG，新增调用走 `app/utils/ffmpeg.py` 封装。
 - 日志统一走 `app/utils/logger.py`（基于 **loguru**），勿直接 `print`。

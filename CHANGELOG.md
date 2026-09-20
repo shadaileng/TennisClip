@@ -8,6 +8,13 @@
 
 ### Added
 
+- 可编排工作流系统（ComfyUI 风格 DAG）：节点契约与注册表（`workflow/spec.py`）、9 个内置节点（input.video / preprocess.transcode / detect.candidates / analyze.highlight / post.filter_segments / post.uniform_slices / edit.concat / report.technical / output.artifact）、图结构校验（R1~R10 十项规则）与 Kahn 拓扑排序、执行器（`workflow/executor.py`）含 Context 传值与产物投影
+- 预置工作流编译器 `workflow/presets.py`：`compile_from_legacy(stages, strategy, level)` 将旧管线三元组编译为 WorkflowGraph，`compile_from_config(db, config)` 读取配置 KV 编译
+- 工作流持久化：`workflows` 表（name/graph_json/is_builtin/enabled）+ Alembic 迁移 + `workflow_service.py` CRUD/激活/种子
+- 工作流 API：`GET /api/v1/workflows/schema`（节点目录）、`GET/POST/PUT/DELETE /api/v1/workflows`（CRUD）、`POST /{id}/activate`、`POST /validate`（草稿校验不落库）
+- 前端工作流编排面板（`WorkflowPanel.vue`）：右侧滑出面板，含预设列表、节点目录、参数表单、JSON 导入导出；App.vue 头部新增「工作流」按钮
+- 配置 KV 新增 `workflow.mode`（legacy/workflow）、`workflow.default_graph_id`；重命名 `highlight.level` → `llm.analysis_level`、`llm.analysis_mode` → `llm.highlight_strategy`
+- 新增 `segment_ops.py` 抽取 `_exclude_prep` / `_clamp_segments` / `_uniform_slices` 供新旧代码共享
 - 分析分层 `level` 驱动高光选择策略：`beginner`/`intermediate`/`professional` 各对应不同高光数量档位（`max_segments` 2/3/5），由 `HighlightConfig.level_strategies` 映射 + `resolve_selection` 统一解析
 - 新增「所有高光回合」档位 `level=all`：遍历整段视频、截取并拼接全部高光时刻，不受 `max_segments` 与 `target_duration` 约束；`HighlightResult.all_highlights` 作为全段拼接唯一事实来源，下游剪辑据此全段拼接，且 `core.run_pipeline` 在 all 档位跳过技术分析报告生成（仅剪辑、不分析）
 - `event_detect.detect_candidates` 新增 `top_n` 参数（`None`=不截断），`build_highlight_prompt` 新增 `select_all` 全量返回约束，前端 `UploadPanel` 新增「所有高光回合」选项
