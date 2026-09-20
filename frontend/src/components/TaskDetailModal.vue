@@ -13,7 +13,6 @@ const show = computed(() => store.showDetail)
 
 const hasHighlight = computed(() => !!task.value?.highlight_video_path)
 const hasReport = computed(() => !!task.value?.report)
-const hasFullResult = computed(() => !!task.value?.highlight || !!task.value?.report)
 
 const highlightVideoUrl = computed(() =>
   task.value?.task_id ? api.videoUrl(task.value.task_id) : '',
@@ -90,18 +89,24 @@ function fmtTime(iso) {
 
     <!-- 内容区 -->
     <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-      <!-- 无完整结果 -->
-      <p v-if="!hasFullResult" class="py-8 text-center text-sm text-slate-500">
-        <template v-if="task.status === 'failed' || task.status === 'timeout'">任务处理失败：{{ task.error || task.status }}</template>
-        <template v-else-if="task.status === 'succeeded'">暂无结果数据</template>
-        <template v-else>任务正在处理中…</template>
+      <!-- 失败/处理中 -->
+      <p v-if="task.status === 'failed' || task.status === 'timeout'" class="py-8 text-center text-sm text-red-400">
+        任务处理失败：{{ task.error || task.status }}
+      </p>
+      <p v-else-if="task.status !== 'succeeded'" class="py-8 text-center text-sm text-slate-500">
+        任务正在处理中…
       </p>
 
-      <!-- 有完整结果 -->
-      <template v-else>
-        <VideoPlayer v-if="hasHighlight" :src="highlightVideoUrl" :segments="highlightSegments" />
-        <ReportView :report="reportData" :all-mode="isAllHighlights" />
-      </template>
+      <!-- 有视频就显示视频 -->
+      <VideoPlayer v-if="hasHighlight" :src="highlightVideoUrl" :segments="highlightSegments" />
+
+      <!-- 有报告就显示报告 -->
+      <ReportView v-if="hasReport || isAllHighlights" :report="reportData" :all-mode="isAllHighlights" />
+
+      <!-- 成功但什么都没有 -->
+      <p v-if="task.status === 'succeeded' && !hasHighlight && !hasReport" class="py-8 text-center text-sm text-slate-500">
+        暂无结果数据
+      </p>
     </div>
 
     <!-- 底栏操作 -->
