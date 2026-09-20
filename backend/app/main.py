@@ -23,6 +23,7 @@ from app.utils.logger import get_logger, setup_logging
 from app.utils.tasks import TaskQueue
 from app.core import run_pipeline
 from app.routers import upload as upload_router
+from app.routers import workflows as workflows_router
 from app.services import db_service, upload_service
 
 # 尽早接管日志（含 uvicorn 内置日志），保证启动期日志统一格式输出
@@ -36,6 +37,9 @@ app.state.config = config
 
 # 上传路由（两步上传 + MD5 秒传 + 分片续传）
 app.include_router(upload_router.router)
+
+# 工作流路由（CRUD / Schema / 激活 / 校验）
+app.include_router(workflows_router.router)
 
 # CORS（前后端分开部署时放行跨域；同源部署下无副作用）
 # allowed_origins 来自 config.cors（config.yaml 的 cors.allowed_origins，
