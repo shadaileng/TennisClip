@@ -56,20 +56,21 @@ export const useWorkflowStore = defineStore('workflow', () => {
   /** 新建草稿（从零开始或复制已有工作流） */
   function newDraft(copyFrom = null) {
     if (copyFrom) {
-      draft.value = {
-        name: copyFrom.name + '（副本）',
-        graph: JSON.parse(JSON.stringify(copyFrom.graph)),
-      }
+      const g = JSON.parse(JSON.stringify(copyFrom.graph))
+      // Ensure nodes have positions
+      g.nodes.forEach((n, i) => {
+        if (n._x === undefined) { n._x = 80 + (i % 4) * 260; n._y = 80 + Math.floor(i / 4) * 160 }
+      })
+      draft.value = { id: copyFrom.id, name: copyFrom.name + '（副本）', graph: g }
     } else {
-      // 默认空草稿（仅输入 + 输出）
       draft.value = {
         name: '新工作流',
         graph: {
           version: 1,
           name: '新工作流',
           nodes: [
-            { id: 'n1', type: 'input.video', params: {} },
-            { id: 'n2', type: 'output.artifact', params: {} },
+            { id: 'n1', type: 'input.video', params: {}, _x: 80, _y: 100 },
+            { id: 'n2', type: 'output.artifact', params: {}, _x: 340, _y: 100 },
           ],
           edges: [
             { id: 'e1', from: ['n1', 'video'], to: ['n2', 'video'] },
@@ -96,8 +97,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
     try {
       loading.value = true
       error.value = ''
+      // Strip canvas-only _x/_y before validation & save
+      const cleanGraph = JSON.parse(JSON.stringify(draft.value.graph))
+      cleanGraph.nodes.forEach((n) => { delete n._x; delete n._y })
       // 先校验
-      const v = await api.validateWorkflow(draft.value.graph)
+      const v = await api.validateWorkflow(cleanGraph)
       if (!v.ok) {
         validation.value = v
         return false
@@ -105,12 +109,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
       if (draft.value.id) {
         await api.updateWorkflow(draft.value.id, {
           name: draft.value.name,
-          graph: draft.value.graph,
+          graph: cleanGraph,
         })
       } else {
         const result = await api.createWorkflow({
           name: draft.value.name,
-          graph: draft.value.graph,
+          graph: cleanGraph,
         })
         draft.value.id = result.id
       }
@@ -162,6 +166,10 @@ export const useWorkflowStore = defineStore('workflow', () => {
       if (!graph.nodes || !graph.edges) {
         throw new Error('非法工作流 JSON：缺少 nodes 或 edges')
       }
+      // Add positions if missing
+      graph.nodes.forEach((n, i) => {
+        if (n._x === undefined) { n._x = 80 + (i % 4) * 260; n._y = 80 + Math.floor(i / 4) * 160 }
+      })
       draft.value = {
         name: graph.name || '导入的工作流',
         graph,

@@ -7,7 +7,7 @@ import UploadPanel from './components/UploadPanel.vue'
 import TaskCard from './components/TaskCard.vue'
 import ProviderManageModal from './components/ProviderManageModal.vue'
 import StrategyModal from './components/StrategyModal.vue'
-import WorkflowPanel from './components/WorkflowPanel.vue'
+import WorkflowCanvas from './components/WorkflowCanvas.vue'
 
 const store = useTaskStore()
 const wfStore = useWorkflowStore()
@@ -86,6 +86,6 @@ function onUnload() {
 
     <ProviderManageModal :open="store.managing" @close="store.closeManage()" />
     <StrategyModal :open="store.strategizing" @close="store.closeStrategy()" />
-    <WorkflowPanel />
+    <WorkflowCanvas />
   </div>
 </template>
