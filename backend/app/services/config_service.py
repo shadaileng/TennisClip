@@ -226,7 +226,7 @@ def get_ai_config(db: Session, config: Any) -> AIConfig:
 
 
 def get_pipeline_config(db: Session, config: Any = None) -> dict[str, Any]:
-    """解析管线全局配置：启用阶段（按固定顺序）、分析模式、分析层级。
+    """解析管线全局配置：启用阶段（按固定顺序）、高光识别策略、分析层级。
 
     生效值取 DB 覆盖 > 注册表默认；非法/缺失时回落默认全开全序，保证任务可运行。
     """
@@ -242,8 +242,24 @@ def get_pipeline_config(db: Session, config: Any = None) -> dict[str, Any]:
         enabled = list(DEFAULT_STAGES)
     return {
         "enabled_stages": enabled,
-        "analysis_mode": get_config_value(db, "llm.analysis_mode", cfg),
-        "level": get_config_value(db, "highlight.level", cfg),
+        "highlight_strategy": get_config_value(db, "llm.highlight_strategy", cfg),
+        "level": get_config_value(db, "llm.analysis_level", cfg),
+    }
+
+
+def get_workflow_config(db: Session, config: Any = None) -> dict[str, Any]:
+    """解析工作流全局配置：工作流执行模式与默认图 ID。
+
+    返回 {workflow_mode, default_graph_id, enabled_stages, highlight_strategy, level}。
+    """
+    cfg = config or _load_config()
+    pipeline = get_pipeline_config(db, cfg)
+    wf_mode = get_config_value(db, "workflow.mode", cfg)
+    graph_id = get_config_value(db, "workflow.default_graph_id", cfg)
+    return {
+        "workflow_mode": wf_mode,
+        "default_graph_id": graph_id,
+        **pipeline,
     }
 
 

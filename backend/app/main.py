@@ -192,7 +192,7 @@ async def process_video(
     queue.submit(
         lambda r: _process_one(
             video_path, task_id, level, result=r,
-            analysis_mode=pipeline_cfg["analysis_mode"],
+            analysis_mode=pipeline_cfg["highlight_strategy"],
             enabled_stages=pipeline_cfg["enabled_stages"],
         ),
         task_id=task_id,
