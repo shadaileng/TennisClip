@@ -8,6 +8,8 @@ import TaskCard from './components/TaskCard.vue'
 import ProviderManageModal from './components/ProviderManageModal.vue'
 import StrategyModal from './components/StrategyModal.vue'
 import WorkflowCanvas from './components/WorkflowCanvas.vue'
+import TaskHistory from './components/TaskHistory.vue'
+import TaskDetailModal from './components/TaskDetailModal.vue'
 
 const store = useTaskStore()
 const wfStore = useWorkflowStore()
@@ -62,6 +64,13 @@ function onUnload() {
         >
           工作流
         </button>
+        <button
+          type="button"
+          class="rounded-lg border border-purple-500/50 px-3 py-1.5 text-xs font-medium text-purple-300 transition hover:border-purple-400 hover:bg-purple-500/10"
+          @click="store.showHistory = true"
+        >
+          历史任务
+        </button>
       </div>
     </header>
 
@@ -87,5 +96,7 @@ function onUnload() {
     <ProviderManageModal :open="store.managing" @close="store.closeManage()" />
     <StrategyModal :open="store.strategizing" @close="store.closeStrategy()" />
     <WorkflowCanvas />
+    <TaskHistory />
+    <TaskDetailModal />
   </div>
 </template>

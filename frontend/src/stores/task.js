@@ -35,6 +35,13 @@ export const useTaskStore = defineStore('task', {
     defaultLevel: 'intermediate', // 分析层级全局默认（highlight.level）
     analysisMode: 'frame',         // 分析模式全局默认（llm.analysis_mode）
     pipelineStages: null,         // 启用阶段有序列表（pipeline.stages，JSON 数组）
+    // —— 历史任务 ——
+    tasks: [],              // 历史任务列表（来自 /api/v1/db/tasks）
+    loadingTasks: false,    // 列表加载中
+    showHistory: false,     // 历史面板开关
+    selectedTask: null,     // 选中查看详情的任务（完整 TaskResult）
+    showDetail: false,      // 详情弹窗开关
+    _taskFilter: 'all',     // 历史列表筛选（all/succeeded/failed/processing）
   }),
 
   getters: {
@@ -425,6 +432,31 @@ export const useTaskStore = defineStore('task', {
         return data
       } catch {
         return this.current.report
+      }
+    },
+
+    // ---------- 历史任务 ----------
+
+    async loadTasks() {
+      this.loadingTasks = true
+      try {
+        this.tasks = await api.listTasks(50)
+      } catch (e) {
+        this.tasks = []
+      } finally {
+        this.loadingTasks = false
+      }
+    },
+
+    async viewTask(taskId) {
+      try {
+        const data = await api.getTask(taskId)
+        this.selectedTask = data
+        this.showDetail = true
+      } catch {
+        // 任务可能已从内存队列过期，展示基本信息
+        this.selectedTask = this.tasks.find((t) => t.task_id === taskId) || null
+        this.showDetail = true
       }
     },
 

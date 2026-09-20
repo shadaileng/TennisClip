@@ -133,6 +133,13 @@ export const api = {
     return url(`/api/v1/tasks/${encodeURIComponent(taskId)}/video`)
   },
 
+  // ---- 历史任务 ----
+
+  async listTasks(limit = 50) {
+    const res = await fetch(url(`/api/v1/db/tasks?limit=${limit}`))
+    return parse(res)
+  },
+
   // 模型服务商列表（id/name/base_url/api_key 掩码/models/default_model/enabled/sort_order/is_selected）
   async listProviders() {
     const res = await fetch(url('/api/v1/db/providers'))
