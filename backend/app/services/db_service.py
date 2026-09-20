@@ -405,3 +405,60 @@ def get_task_history(limit: int = 50) -> list[Task]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("db: get_task_history failed: {}", exc)
         return []
+
+
+def get_task_detail(task_id: str) -> dict | None:
+    """从数据库重建完整任务结果（替代内存队列，历史查看不依赖服务生命周期）。
+
+    返回与 TaskResult.model_dump() 结构对齐的 dict，前端可直接消费。
+    """
+    try:
+        with session() as s:
+            task = s.query(Task).filter_by(task_id=task_id).first()
+            if not task:
+                return None
+
+            result_row = s.query(TaskResult).filter_by(task_id=task_id).first()
+            outputs = s.query(TaskOutput).filter_by(task_id=task_id).all()
+            inp = s.query(TaskInput).filter_by(task_id=task_id).first()
+
+            # 从 task_outputs 定位文件路径
+            hl_video_path = None
+            report_file_path = None
+            for o in outputs:
+                if o.kind == "highlight_video":
+                    hl_video_path = o.file_path
+                elif o.kind == "report":
+                    report_file_path = o.file_path
+
+            # 解析 JSON 结果
+            highlight = None
+            report = None
+            if result_row:
+                if result_row.highlight_json:
+                    try:
+                        highlight = json.loads(result_row.highlight_json)
+                    except (TypeError, ValueError):
+                        pass
+                if result_row.report_json:
+                    try:
+                        report = json.loads(result_row.report_json)
+                    except (TypeError, ValueError):
+                        pass
+
+            return {
+                "task_id": task.task_id,
+                "status": task.status,
+                "stage": "done" if task.status == "succeeded" else task.status,
+                "source_video": task.source_video or (inp.file_name if inp else ""),
+                "highlight": highlight,
+                "report": report,
+                "highlight_video_path": hl_video_path,
+                "report_path": report_file_path,
+                "error": task.error,
+                "elapsed_seconds": task.elapsed_seconds,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: get_task_detail failed for {}: {}", task_id, exc)
+        return None

@@ -241,6 +241,27 @@ def _get_result(task_id: str) -> TaskResult:
         raise HTTPException(status_code=404, detail="task not found")
 
 
+def _resolve_file_path(task_id: str, kind: str) -> str:
+    """定位任务产出文件路径：优先内存队列，兜底数据库 task_outputs。"""
+    # 1) 内存队列（正在处理或刚完成的任务）
+    try:
+        result = queue.get(task_id)
+        if kind == "video" and result.highlight_video_path:
+            return result.highlight_video_path
+        if kind == "report" and result.report_path:
+            return result.report_path
+    except KeyError:
+        pass
+    # 2) 数据库兜底（历史任务）
+    detail = db_service.get_task_detail(task_id)
+    if detail:
+        if kind == "video" and detail.get("highlight_video_path"):
+            return detail["highlight_video_path"]
+        if kind == "report" and detail.get("report_path"):
+            return detail["report_path"]
+    raise HTTPException(status_code=404, detail=f"{kind} not ready")
+
+
 @app.get("/api/v1/tasks/{task_id}")
 def get_task(task_id: str) -> dict:
     result = _get_result(task_id)
@@ -249,18 +270,14 @@ def get_task(task_id: str) -> dict:
 
 @app.get("/api/v1/tasks/{task_id}/report")
 def get_report(task_id: str) -> FileResponse:
-    result = _get_result(task_id)
-    if not result.report_path:
-        raise HTTPException(404, "report not ready")
-    return FileResponse(result.report_path, filename=result.report_path.split("/")[-1])
+    path = _resolve_file_path(task_id, "report")
+    return FileResponse(path, filename=path.split("/")[-1])
 
 
 @app.get("/api/v1/tasks/{task_id}/video")
 def get_video(task_id: str) -> FileResponse:
-    result = _get_result(task_id)
-    if not result.highlight_video_path:
-        raise HTTPException(404, "video not ready")
-    return FileResponse(result.highlight_video_path, filename=result.highlight_video_path.split("/")[-1])
+    path = _resolve_file_path(task_id, "video")
+    return FileResponse(path, filename=path.split("/")[-1])
 
 
 # ---------- 数据库管理端点（多兼容：SQLite/Postgres/MySQL） ----------
@@ -281,6 +298,15 @@ def db_task_history(limit: int = 50) -> list[dict]:
         }
         for t in tasks
     ]
+
+
+@app.get("/api/v1/db/tasks/{task_id}")
+def db_task_detail(task_id: str) -> dict:
+    """单个任务完整结果（从数据库重建，历史查看不依赖内存队列）。"""
+    detail = db_service.get_task_detail(task_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="task not found")
+    return detail
 
 
 @app.get("/api/v1/db/providers")

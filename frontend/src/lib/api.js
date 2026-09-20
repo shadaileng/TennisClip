@@ -140,6 +140,12 @@ export const api = {
     return parse(res)
   },
 
+  // 从数据库读取完整任务结果（历史查看，不依赖内存队列）
+  async getTaskDetail(taskId) {
+    const res = await fetch(url(`/api/v1/db/tasks/${encodeURIComponent(taskId)}`))
+    return parse(res)
+  },
+
   // 模型服务商列表（id/name/base_url/api_key 掩码/models/default_model/enabled/sort_order/is_selected）
   async listProviders() {
     const res = await fetch(url('/api/v1/db/providers'))

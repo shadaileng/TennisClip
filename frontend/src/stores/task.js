@@ -450,12 +450,11 @@ export const useTaskStore = defineStore('task', {
 
     async viewTask(taskId) {
       try {
-        const data = await api.getTask(taskId)
+        const data = await api.getTaskDetail(taskId)
         this.selectedTask = data
         this.showDetail = true
       } catch {
-        // 任务可能已从内存队列过期，展示基本信息
-        this.selectedTask = this.tasks.find((t) => t.task_id === taskId) || null
+        this.selectedTask = null
         this.showDetail = true
       }
     },

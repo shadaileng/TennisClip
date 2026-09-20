@@ -90,10 +90,10 @@ function fmtTime(iso) {
 
     <!-- 内容区 -->
     <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-      <!-- 无完整结果（任务过期或非成功） -->
+      <!-- 无完整结果 -->
       <p v-if="!hasFullResult" class="py-8 text-center text-sm text-slate-500">
-        <template v-if="task.status === 'succeeded'">任务结果已过期，无法查看详细内容</template>
-        <template v-else-if="task.status === 'failed' || task.status === 'timeout'">任务处理失败：{{ task.error || task.status }}</template>
+        <template v-if="task.status === 'failed' || task.status === 'timeout'">任务处理失败：{{ task.error || task.status }}</template>
+        <template v-else-if="task.status === 'succeeded'">暂无结果数据</template>
         <template v-else>任务正在处理中…</template>
       </p>
 
