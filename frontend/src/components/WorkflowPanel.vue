@@ -164,19 +164,19 @@ const activeTab = ref('nodes')
 </script>
 
 <template>
-  <div v-if="store.panelOpen" class="fixed inset-y-0 right-0 z-50 flex w-full max-w-3xl flex-col border-l border-slate-700 bg-slate-900 shadow-2xl">
+  <div v-if="store.panelOpen" class="fixed inset-0 z-50 flex flex-col bg-slate-950">
     <!-- 头部 -->
-    <div class="flex items-center justify-between border-b border-slate-700 px-4 py-3">
-      <h2 class="text-sm font-bold text-slate-100">工作流编排</h2>
-      <div class="flex gap-2">
-        <button class="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500" @click="store.saveDraft()" :disabled="!store.draft || store.loading">保存</button>
-        <button class="rounded bg-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-600" @click="store.close()">关闭</button>
+    <div class="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-5 py-3">
+      <h2 class="text-sm font-bold text-slate-100">🎾 工作流编排</h2>
+      <div class="flex items-center gap-2">
+        <button class="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500" @click="store.saveDraft()" :disabled="!store.draft || store.loading">💾 保存</button>
+        <button class="rounded bg-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-600" @click="store.close()">✕ 关闭</button>
       </div>
     </div>
 
     <div class="flex flex-1 overflow-hidden">
       <!-- 左侧：预设 + 节点目录 -->
-      <div class="flex w-56 flex-col border-r border-slate-700 overflow-y-auto">
+      <div class="flex w-60 flex-col border-r border-slate-700 overflow-y-auto">
         <!-- 预设列表 -->
         <div class="border-b border-slate-700 p-3">
           <div class="mb-2 flex items-center justify-between">
@@ -316,5 +316,5 @@ const activeTab = ref('nodes')
     </div>
   </div>
   <!-- 遮罩 -->
-  <div v-if="store.panelOpen" class="fixed inset-0 z-40 bg-black/40" @click="store.close()" />
+  <div v-if="store.panelOpen" class="fixed inset-0 z-40 bg-black/50" @click="store.close()" />
 </template>

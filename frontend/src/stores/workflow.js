@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { api, ApiError } from '../lib/api'
 
 export const useWorkflowStore = defineStore('workflow', () => {
@@ -19,6 +19,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const error = ref('')
   // 成功信息
   const success = ref('')
+  // 当前激活的工作流信息
+  const activeWorkflow = ref(null)
+  const isActive = computed(() => !!activeWorkflow.value)
 
   /** 加载节点 Schema */
   async function loadSchema() {
@@ -34,6 +37,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     try {
       loading.value = true
       workflows.value = await api.listWorkflows()
+      // 自动识别激活工作流
+      activeWorkflow.value = workflows.value.find(w => w.is_active) || null
     } catch (e) {
       error.value = e.message
     } finally {
@@ -141,6 +146,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     try {
       await api.activateWorkflow(id)
       await loadWorkflows()
+      // 同步激活状态（loadWorkflows 已自动设置）
       error.value = ''
       success.value = '工作流已激活'
       setTimeout(() => { success.value = '' }, 3000)
@@ -204,6 +210,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     loading,
     error,
     success,
+    activeWorkflow,
+    isActive,
     loadSchema,
     loadWorkflows,
     open,

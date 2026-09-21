@@ -445,7 +445,7 @@ const paletteOpen = ref(false)
                   :value="node.params[p.key] ?? p.default"
                   @change="node.params[p.key] = $event.target.value"
                   class="flex-1 min-w-0 rounded bg-slate-800 border border-slate-600 px-1 py-0.5 text-[10px] text-slate-200 outline-none focus:border-emerald-500">
-                  <option value="">默认</option>
+                  <option value="">{{ p.key === 'model' ? '跟随全局配置' : '默认' }}</option>
                   <option v-for="opt in (p.options || [])" :key="opt" :value="opt">{{ opt }}</option>
                 </select>
                 <input v-else-if="p.type === 'int' || p.type === 'float'"

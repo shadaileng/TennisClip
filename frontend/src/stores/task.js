@@ -28,10 +28,6 @@ export const useTaskStore = defineStore('task', {
     managing: false, // 模型管理弹窗开关
     manageError: null,
     manageSaving: false,
-    // —— 策略调整（全局配置：阶段/分析模式/层级）——
-    strategizing: false, // 策略调整弹窗开关
-    strategyError: null,
-    strategySaving: false,
     defaultLevel: 'intermediate', // 分析层级全局默认（highlight.level）
     analysisMode: 'frame',         // 分析模式全局默认（llm.analysis_mode）
     pipelineStages: null,         // 启用阶段有序列表（pipeline.stages，JSON 数组）
@@ -180,33 +176,6 @@ export const useTaskStore = defineStore('task', {
 
     closeManage() {
       this.managing = false
-    },
-
-    // ---------- 策略调整（全局管线配置） ----------
-
-    openStrategy() {
-      this.strategizing = true
-      this.strategyError = null
-    },
-
-    closeStrategy() {
-      this.strategizing = false
-    },
-
-    async saveStrategy(payload) {
-      this.strategySaving = true
-      this.strategyError = null
-      try {
-        // 顺序无关：三项独立 KV，写后重载配置刷新本地状态
-        await api.configSet('pipeline.stages', JSON.stringify(payload.stages))
-        await api.configSet('llm.analysis_mode', payload.analysisMode)
-        await api.configSet('highlight.level', payload.level)
-        await this.loadConfig()
-      } catch (e) {
-        this.strategyError = `策略保存失败：${String(e.message || e)}`
-      } finally {
-        this.strategySaving = false
-      }
     },
 
     async createProvider(payload) {

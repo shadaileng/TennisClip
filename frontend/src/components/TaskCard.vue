@@ -20,26 +20,45 @@ const showResults = computed(
   () => task.value?.status === 'succeeded' && (task.value.highlight || task.value.report || task.value.highlight_video_path)
 )
 
-// 处理阶段步骤条（与后端 run_pipeline 的 stage 对齐）
-// all 档位（所有高光回合）仅剪辑、不生成报告，步骤条隐藏「报告生成」
-const stages = computed(() =>
-  store.allHighlights
-    ? [
-        { key: 'preprocessing', label: '预处理' },
-        { key: 'highlighting', label: '高光识别' },
-        { key: 'editing', label: '自动剪辑' },
-      ]
-    : [
-        { key: 'preprocessing', label: '预处理' },
-        { key: 'highlighting', label: '高光识别' },
-        { key: 'editing', label: '自动剪辑' },
-        { key: 'reporting', label: '报告生成' },
-      ]
-)
+// 工作流节点进度（动态）
+const workflowNodes = computed(() => task.value?.workflow_nodes || [])
+
+// 处理阶段步骤条：优先使用工作流节点进度，无则回退到硬编码 4 阶段
+const stages = computed(() => {
+  if (workflowNodes.value.length > 0) {
+    return workflowNodes.value.map(wn => ({
+      key: wn.stage,
+      label: wn.label,
+      nodeId: wn.node_id,
+      nodeType: wn.node_type,
+      status: wn.status,  // pending/running/done/failed/skipped
+    }))
+  }
+  // 回退：硬编码 4 阶段（旧任务兼容）
+  if (store.allHighlights) {
+    return [
+      { key: 'preprocessing', label: '预处理', status: 'pending' },
+      { key: 'highlighting', label: '高光识别', status: 'pending' },
+      { key: 'editing', label: '自动剪辑', status: 'pending' },
+    ]
+  }
+  return [
+    { key: 'preprocessing', label: '预处理', status: 'pending' },
+    { key: 'highlighting', label: '高光识别', status: 'pending' },
+    { key: 'editing', label: '自动剪辑', status: 'pending' },
+    { key: 'reporting', label: '报告生成', status: 'pending' },
+  ]
+})
+
+// 判断是否有工作流节点（用于区分动态/静态渲染）
+const hasWorkflowNodes = computed(() => workflowNodes.value.length > 0)
+
 const currentStageIndex = computed(() =>
-  stages.findIndex((s) => s.key === task.value?.stage)
+  stages.value.findIndex((s) => s.key === task.value?.stage)
 )
 const allDone = computed(() => task.value?.status === 'succeeded')
+
+// 旧任务兼容：阶段完成/活跃判断（无 workflow_nodes 时使用）
 function isStageDone(i) {
   if (allDone.value) return true
   return currentStageIndex.value >= 0 && i < currentStageIndex.value
@@ -57,6 +76,26 @@ function labelClass(i) {
   if (isStageDone(i)) return 'text-emerald-300'
   if (isStageActive(i)) return 'text-emerald-200'
   return 'text-slate-500'
+}
+
+// 动态工作流节点样式
+function nodeStageClass(s) {
+  if (allDone.value || s.status === 'done') return 'bg-emerald-500 text-slate-950'
+  if (s.status === 'running') return 'bg-emerald-500/20 text-emerald-300 ring-2 ring-emerald-500'
+  if (s.status === 'failed') return 'bg-red-500/20 text-red-300 ring-2 ring-red-500'
+  if (s.status === 'skipped') return 'bg-slate-800 text-slate-600 border border-dashed border-slate-600'
+  return 'bg-slate-800 text-slate-400'
+}
+function nodeLabelClass(s) {
+  if (allDone.value || s.status === 'done') return 'text-emerald-300'
+  if (s.status === 'running') return 'text-emerald-200'
+  if (s.status === 'failed') return 'text-red-300'
+  if (s.status === 'skipped') return 'text-slate-600'
+  return 'text-slate-500'
+}
+function nodeConnectorClass(s) {
+  if (allDone.value || s.status === 'done') return 'bg-emerald-500'
+  return 'bg-slate-700'
 }
 </script>
 
@@ -86,7 +125,37 @@ function labelClass(i) {
 
       <!-- 阶段步骤条（非终态，实时高亮当前阶段） -->
       <div v-if="!isTerminal" class="mb-4">
-        <ol class="flex items-center">
+        <!-- 动态工作流节点步骤条 -->
+        <ol v-if="hasWorkflowNodes" class="flex items-center">
+          <li
+            v-for="(s, i) in stages"
+            :key="s.nodeId || s.key"
+            class="flex items-center"
+            :class="i === stages.length - 1 ? 'flex-none' : 'flex-1'"
+          >
+            <div class="flex flex-col items-center">
+              <span
+                class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold"
+                :class="nodeStageClass(s)"
+              >
+                <template v-if="allDone || s.status === 'done'">✓</template>
+                <template v-else-if="s.status === 'running'"><span class="animate-pulse">●</span></template>
+                <template v-else-if="s.status === 'failed'">✕</template>
+                <template v-else-if="s.status === 'skipped'">—</template>
+                <template v-else>{{ i + 1 }}</template>
+              </span>
+              <span class="mt-1 whitespace-nowrap text-[11px]" :class="nodeLabelClass(s)">{{ s.label }}</span>
+            </div>
+            <span
+              v-if="i < stages.length - 1"
+              class="mx-1 h-0.5 flex-1 rounded"
+              :class="nodeConnectorClass(s)"
+            />
+          </li>
+        </ol>
+
+        <!-- 旧任务兼容：静态阶段步骤条 -->
+        <ol v-else class="flex items-center">
           <li
             v-for="(s, i) in stages"
             :key="s.key"
