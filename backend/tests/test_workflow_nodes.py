@@ -136,10 +136,11 @@ def test_analyze_highlight透传_params(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_highlights(video, config, duration, level="intermediate", analysis_mode=None, model=None):
+    def fake_highlights(video, config, duration, level="intermediate", analysis_mode=None, model=None, candidates=None):
         captured["level"] = level
         captured["analysis_mode"] = analysis_mode
         captured["model"] = model
+        captured["candidates"] = candidates
         return HighlightResult(segments=[], scene_type="training")
 
     from app.services import highlight as hl_svc

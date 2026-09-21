@@ -349,6 +349,10 @@ def test_db_service_roundtrip():
             test_db.unlink()
     except OSError:
         pass  # 文件仍被 SQLite 句柄占用，留待下次运行前清理
+    finally:
+        # 恢复原始数据库引擎，避免污染后续测试（upload 等依赖默认库）
+        importlib.reload(db_service)
+        db_service.init_db(load_config())
 
 
 def test_exclude_prep_drops_other_and_low_conf(tmp_path, monkeypatch):
