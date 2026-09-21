@@ -53,6 +53,15 @@ class TaskStatus(StrEnum):
     TIMEOUT = "timeout"
 
 
+class WorkflowNodeProgress(BaseModel):
+    """单个工作流节点的执行进度。"""
+    node_id: str = Field(description="节点 ID（如 n1）")
+    node_type: str = Field(description="节点类型（如 analyze.highlight）")
+    label: str = Field(description="节点中文标签（如 LLM 高光识别）")
+    stage: str = Field(description="stage 上报值（如 highlighting）")
+    status: str = Field(default="pending", description="pending | running | done | failed | skipped")
+
+
 class TaskResult(BaseModel):
     """一条视频处理任务的完整结果。"""
     task_id: str
@@ -66,3 +75,4 @@ class TaskResult(BaseModel):
     report_error: Optional[str] = None  # 报告生成失败原因（非致命，保留已生成的高光）
     error: Optional[str] = None
     elapsed_seconds: float = 0.0
+    workflow_nodes: List[WorkflowNodeProgress] = Field(default_factory=list, description="工作流节点执行进度列表")

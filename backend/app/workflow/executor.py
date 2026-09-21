@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.config import AppConfig
-from app.models import TaskResult, TaskStatus
+from app.models import TaskResult, TaskStatus, WorkflowNodeProgress
 from app.services import db_service
 from app.utils.logger import get_logger
 from app.workflow.graph import WorkflowGraph
@@ -81,6 +81,22 @@ class Executor:
             logger.info("workflow: start {} (graph={})", video_path.name, self.graph.name)
             order = self.graph.topo_order()
 
+            # 1) 初始化节点进度列表（按拓扑序，包含所有节点）
+            self.result.workflow_nodes = []
+            node_index_map: dict[str, int] = {}
+            for i, node_id in enumerate(order):
+                node = self.graph.nodes[node_id]
+                spec = get_spec(node.type)
+                self.result.workflow_nodes.append(WorkflowNodeProgress(
+                    node_id=node_id,
+                    node_type=node.type,
+                    label=spec.label if spec else node.type,
+                    stage=spec.stage if spec else "unknown",
+                    status="pending",
+                ))
+                node_index_map[node_id] = i
+
+            # 2) 执行时逐节点更新状态
             for node_id in order:
                 node = self.graph.nodes[node_id]
                 if not node.enabled:
@@ -94,20 +110,24 @@ class Executor:
                 if fn is None:
                     raise RuntimeError(f"节点 {node_id}({node.type}) 无执行函数")
 
+                # 更新当前节点为 running
+                idx = node_index_map[node_id]
+                self.result.workflow_nodes[idx].status = "running"
+                self.result.stage = spec.stage  # 保持兼容
+
                 # 解析输入（按连线取值）
                 ctx.inputs = ctx.resolve_inputs(self.graph, node_id)
 
                 # 缺省值填充 + 校验
                 params = resolve_params(spec.params, node.params)
 
-                # stage 上报（默认图沿用旧四个 stage 值）
-                self.result.stage = spec.stage
-
                 logger.info("workflow: node={} type={}", node_id, node.type)
                 try:
                     outputs = fn(ctx, params)
                     ctx.store(node_id, outputs)
+                    self.result.workflow_nodes[idx].status = "done"
                 except Exception as exc:
+                    self.result.workflow_nodes[idx].status = "failed"
                     if spec.optional:
                         logger.warning("workflow: 可选节点 {} 失败，继续：{}", node_id, exc)
                         continue

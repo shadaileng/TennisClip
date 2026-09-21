@@ -38,6 +38,9 @@ _STRICT_SPLIT_APPEND = (
 )
 
 
+_NO_CANDIDATES = object()  # sentinel：调用方未传 candidates 参数（legacy 管线走内部检测）
+
+
 def find_highlights(
     video_path: Path,
     config: AppConfig,
@@ -45,6 +48,7 @@ def find_highlights(
     level: str = "intermediate",
     analysis_mode: Optional[str] = None,
     model: Optional[str] = None,
+    candidates: Optional[list] = _NO_CANDIDATES,
 ) -> HighlightResult:
     """识别高光回合，返回结构化时间戳。
 
@@ -67,16 +71,31 @@ def find_highlights(
     # 视频理解：ffmpeg 候选窗口本就不准（这正是选用视频理解的原因），故完全不跑信号检测、
     # 直接传空候选，由模型自由观看整段并独立定位高光；
     # 仅抽帧模式需要候选窗口锚定抽帧位置与 ±2s 精修。
-    if mode == "frame" and duration_seconds:
-        # all 档位遍历整段：候选不截断；其余沿用 candidate_top_n 默认上限
-        top_n = None if all_highlights else config.highlight.candidate_top_n
-        candidates = event_detect.detect_candidates(
-            video_path, config, float(duration_seconds), top_n=top_n
-        )
+    # 候选来源判断：
+    # - candidates 是 _NO_CANDIDATES（未传参）→ legacy 管线，内部跑信号检测
+    # - candidates 是 None（工作流节点传入 None 或显式传空）→ 无候选，不跑检测
+    # - candidates 是非空列表 → 使用传入的候选
+    if candidates is _NO_CANDIDATES:
+        # legacy 管线：内部跑信号检测
+        if mode == "frame" and duration_seconds:
+            top_n = None if all_highlights else config.highlight.candidate_top_n
+            _detected = event_detect.detect_candidates(
+                video_path, config, float(duration_seconds), top_n=top_n
+            )
+            useful = bool(_detected) and not _candidates_degenerate(_detected, duration_seconds)
+            _final_cands = _detected if useful else []
+        else:
+            useful = False
+            _final_cands = []
+    elif candidates:
+        # 工作流上游节点传入了候选列表
+        _final_cands = list(candidates)
+        useful = True
     else:
-        candidates = []
-    useful = bool(candidates) and not _candidates_degenerate(candidates, duration_seconds)
-    prompt_cands = candidates if useful else []
+        # candidates=None 或 candidates=[]：无候选，不跑检测
+        useful = False
+        _final_cands = []
+    prompt_cands = _final_cands
     prompt = build_highlight_prompt(
         level=level, duration_seconds=duration_seconds, candidates=prompt_cands,
         select_all=all_highlights, mode=mode,
@@ -132,15 +151,15 @@ def find_highlights(
             _maybe_uniform_slices(highlight, config, duration_seconds)
     elif useful:
         # 锚定到候选窗口，避免 LLM 再次臆造时间戳
-        _clamp_to_candidates(highlight, candidates, config, max_segments=sel["max_segments"], cap=not all_highlights)
+        _clamp_to_candidates(highlight, _final_cands, config, max_segments=sel["max_segments"], cap=not all_highlights)
         if not highlight.segments:
             # LLM 未返回有效高光时，退化使用候选窗口本身（仍优于全片盲剪）
-            highlight.segments = candidates
+            highlight.segments = _final_cands
         if all_highlights:
             # 全量模式：补齐 LLM 漏返的候选窗口，确保遍历整段、截取所有高光时刻
-            _fill_missing_candidates(highlight, candidates, config)
+            _fill_missing_candidates(highlight, _final_cands, config)
         # 准备段后过滤：丢弃 other/低置信/与候选动作窗口不重叠的段
-        _exclude_prep(highlight, config, candidates)
+        _exclude_prep(highlight, config, _final_cands)
     else:
         _clamp_segments(highlight, config, duration_seconds, max_segments=sel["max_segments"], cap=not all_highlights)
         _maybe_uniform_slices(highlight, config, duration_seconds)

@@ -68,16 +68,17 @@ _FN_REGISTRY: dict[str, Callable] = {}
 
 
 def _get_available_models() -> list[str]:
-    """从 DB 服务商表获取所有启用模型的 model_id 列表。"""
+    """从 DB 服务商表获取所有启用模型，返回 'provider_name/model_id' 格式列表。"""
     try:
         from app.services import db_service
         providers = db_service.list_providers()
-        models = []
+        models: list[str] = []
         for p in providers:
             if not p.get("enabled", True):
                 continue
+            pname = p.get("name", "")
             for m in (p.get("models") or []):
-                label = f"{p['name']}/{m}" if p.get("name") else m
+                label = f"{pname}/{m}" if pname else m
                 if label not in models:
                     models.append(label)
         return models
@@ -172,8 +173,12 @@ def resolve_params(param_specs: list[ParamSpec], values: dict) -> dict[str, Any]
 
         # 选项校验（空字符串始终允许，表示使用默认值）
         if spec.type == "select" and spec.options is not None:
-            if val != "" and val not in spec.options:
-                raise ValueError(f"参数 {spec.key} 取值非法：{val}，应为 {spec.options}")
+            # 动态解析 model 参数的可用选项（与 build_schema 保持一致）
+            check_options = spec.options
+            if spec.key == "model" and not spec.options:
+                check_options = _get_available_models()
+            if val != "" and val not in check_options:
+                raise ValueError(f"参数 {spec.key} 取值非法：{val}，应为 {check_options}")
 
         # 范围校验（int/float）
         if spec.type in ("int", "float") and isinstance(val, (int, float)):

@@ -56,7 +56,8 @@ def run(ctx, params):
     model = params.get("model") or None
 
     hl = highlight_service.find_highlights(
-        video, config, float(duration), level=level, analysis_mode=analysis_mode, model=model
+        video, config, float(duration), level=level, analysis_mode=analysis_mode, model=model,
+        candidates=candidates,
     )
 
     return {"highlight": hl}
