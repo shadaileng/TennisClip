@@ -4,6 +4,22 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.12.0] - 2026-09-21
+
+### Added
+
+- 主页面左右等宽两列布局（上传 + 任务），去掉简易模式与策略弹窗
+- UploadPanel 工作流下拉框：列出所有启用工作流，选中即激活，底部「编辑工作流...」打开画布
+- TaskCard 步骤条动态化：从 `task.workflow_nodes` 读取节点列表，与工作流一一对应
+- 工作流执行器逐节点进度上报（`WorkflowNodeProgress` 模型）
+- 模型参数 `provider/model` 格式路由：自动解析服务商前缀，动态切换 base_url + api_key
+- `GET /api/v1/tasks` 数据库 fallback：任务完成后队列丢失仍可查询
+
+### Fixed
+
+- 工作流无 `detect.candidates` 节点时不再偷偷跑信号检测（`_NO_CANDIDATES` sentinel 区分调用来源）
+- `test_db_service_roundtrip` 测试结束后恢复原始数据库引擎，修复 upload 测试 500 错误
+
 ## [0.11.0] - 2026-09-20
 
 ### Added
