@@ -264,8 +264,17 @@ def _resolve_file_path(task_id: str, kind: str) -> str:
 
 @app.get("/api/v1/tasks/{task_id}")
 def get_task(task_id: str) -> dict:
-    result = _get_result(task_id)
-    return result.model_dump()
+    # 1) 优先从内存队列取（实时 stage/status 变化）
+    try:
+        result = queue.get(task_id)
+        return result.model_dump()
+    except KeyError:
+        pass
+    # 2) 兜底从数据库取（历史任务 / 队列已清理）
+    detail = db_service.get_task_detail(task_id)
+    if detail:
+        return detail
+    raise HTTPException(status_code=404, detail="task not found")
 
 
 @app.get("/api/v1/tasks/{task_id}/report")

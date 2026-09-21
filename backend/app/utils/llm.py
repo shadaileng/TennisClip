@@ -194,7 +194,23 @@ def complete_structured(
     """
     provider, api_key = _resolve_provider(config)
     if model_override:
-        provider.model = model_override
+        # 支持 "provider_name/model_id" 格式：动态切换到指定服务商
+        if "/" in model_override:
+            prov_name, model_id = model_override.split("/", 1)
+            from app.services import db_service
+            db_provider = db_service.get_provider_by_name(prov_name)
+            if db_provider and db_provider.api_key:
+                provider = SimpleNamespace(
+                    name=db_provider.name,
+                    base_url=db_provider.base_url,
+                    model=model_id,
+                )
+                api_key = db_provider.api_key
+            else:
+                # 指定服务商不存在或无 API Key，回落全局配置 + 纯 model_id
+                provider.model = model_id
+        else:
+            provider.model = model_override
     if _is_mock_mode(config, api_key):
         logger.info(
             "llm: 进入 mock 模式（schema={}），未实际调用模型 provider={} model={}",
