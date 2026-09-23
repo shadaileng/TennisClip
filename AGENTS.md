@@ -154,7 +154,7 @@ TennisClip/
   - 连接串与 ORM 元数据由 `alembic/env.py` 动态解析（`DATABASE_URL` > `config.yaml`），与运行时同源；勿在 `alembic.ini` 写死 URL。
   - 新增表/列/索引：改 `app/db_models.py` 的 ORM → 跑 `alembic revision --autogenerate` → 审查生成的 `alembic/versions/*.py` 后 `upgrade head`。
 - 全链路逻辑集中在 `app/core.py`，各节点结果同步落库；新增节点保持该契约。
-- **可编排工作流**：新增节点类型须在 `app/workflow/nodes/` 下新建模块，用 `@register(NodeSpec(...))` 装饰器注册；节点函数签名统一为 `run(ctx, params) -> dict[port, value]`；节点是 services 的薄封装，不重复业务逻辑。图校验规则 R1~R10 在 `graph.py` 的 `validate()` 中执行，不抛异常、返回结构化结果。
+- **可编排工作流**：新增节点类型须在 `app/workflow/nodes/` 下新建模块，用 `@register(NodeSpec(...))` 装饰器注册（`nodes/__init__.py` 自动发现导入，放文件即注册、无需改清单）；节点函数签名统一为 `run(ctx, params) -> dict[port, value]`；节点是 services 的薄封装，不重复业务逻辑。图校验规则 R1~R10 在 `graph.py` 的 `validate()` 中执行，不抛异常、返回结构化结果（含 R8 扩展：有高光生产节点时 `output.artifact` 缺 `highlight` 入边阻断）。**独立性契约（方案 12 · Step 0）**：执行器为每节点注入 `copy.deepcopy` 后的独立 `ctx.config`，节点内可直接改写、无须 try/finally 恢复；端口值一律函数式传递（`model_copy(update=...)`），禁止原地修改上游输出；端口值在 `store()`/`resolve_inputs()` 经 `spec.PORT_PY_TYPES` 运行时类型校验；`NodeSpec.on_failure`（默认 `fail`；`skip` = 节点失败后自身与下游级联标记 skipped、任务仍成功，CV/GPU 类节点应标 `skip`），上游正常输出 `None` 不触发级联。
 - Prompt 模板集中在 `prompts/`（网球教学知识库注入点），勿散落在 service 内。
 - 视频处理依赖系统 FFMPEG，新增调用走 `app/utils/ffmpeg.py` 封装。
 - 日志统一走 `app/utils/logger.py`（基于 **loguru**），勿直接 `print`。

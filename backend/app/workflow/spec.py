@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 
@@ -19,6 +20,54 @@ class PortType:
     CANDIDATES = "candidates"
     HIGHLIGHT = "highlight"
     REPORT = "report"
+    # 阶段 2 CV 感知层扩展（文档 12 · Step 2.1；Step 0 先注册类型与校验映射）
+    TRACK = "track"
+    COURT = "court"
+    POSE = "pose"
+
+
+# ---------- 运行时端口值类型（批次 A3）----------
+#
+# 连线期 R4 只校验端口类型字符串；运行时校验在 store/resolve 期强制
+# 端口值的 Python 实际类型，防止传错对象到节点深处才炸。
+# 值为 None（缺输入）不校验；未登记的类型不校验（向后兼容）。
+#
+# 循环导入规避：app/models 不依赖 workflow，顶层直接导入安全。
+from app.models import HighlightResult, TechnicalReport  # noqa: E402
+
+PORT_PY_TYPES: dict[str, tuple] = {
+    PortType.VIDEO: (Path,),
+    PortType.DURATION: (int, float),
+    PortType.CANDIDATES: (list,),
+    PortType.HIGHLIGHT: (HighlightResult,),
+    PortType.REPORT: (TechnicalReport,),
+    # CV 感知层端口（阶段 2 实施时补充具体类型；缺省 list/dict 兜底）
+    PortType.TRACK: (list,),
+    PortType.COURT: (dict,),
+    PortType.POSE: (dict,),
+}
+
+
+def validate_port_value(port_type: str, value, where: str = "") -> None:
+    """运行时校验端口值类型；不匹配抛 TypeError（含端口与来源信息）。
+
+    - value 为 None：跳过（缺输入由节点自身或级联跳过处理）。
+    - port_type 未登记在 PORT_PY_TYPES：跳过（向后兼容旧端口）。
+    - 匹配失败：抛 TypeError，文案含期望类型与实际类型，定位到 where。
+    """
+    if value is None:
+        return
+    expected = PORT_PY_TYPES.get(port_type)
+    if not expected:
+        return
+    if isinstance(value, expected):
+        return
+    expected_names = " | ".join(t.__name__ for t in expected if t is not type(None))
+    actual = type(value).__name__
+    raise TypeError(
+        f"端口 {port_type} 值类型不匹配：期望 {expected_names}，实际 {actual}"
+        + (f"（{where}）" if where else "")
+    )
 
 
 # ---------- 端口与参数 ----------
@@ -59,6 +108,11 @@ class NodeSpec:
     stage: str  # 进度上报用的 stage 名
     optional: bool = False  # 失败不致命（如 report）
     expensive: bool = False  # LLM 调用等高成本节点
+    # 失败策略（批次 B1，默认 fail 向后兼容）：
+    #   "fail" —— 节点失败 → 整个任务 FAILED（默认）
+    #   "skip" —— 节点失败 → 本节点与下游级联标记 skipped，任务仍 SUCCEEDED
+    #             （CV/GPU 类节点用此策略：TrackNet 挂掉退回无候选模式）
+    on_failure: str = "fail"
 
 
 # ---------- 注册表 ----------
@@ -141,6 +195,7 @@ def build_schema() -> list[dict]:
             "stage": spec.stage,
             "optional": spec.optional,
             "expensive": spec.expensive,
+            "on_failure": spec.on_failure,
         }
         schema.append(node)
     return schema

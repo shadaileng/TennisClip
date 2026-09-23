@@ -1,4 +1,7 @@
-"""均匀切片兜底节点：按 duration 产出 N 段且总时长覆盖全程。"""
+"""均匀切片兜底节点：按 duration 产出 N 段且总时长覆盖全程。
+
+批次 A1：ctx.config 为节点级深拷贝，参数覆盖直接改写、无需 try/finally 恢复。
+"""
 
 from __future__ import annotations
 
@@ -37,13 +40,9 @@ def run(ctx, params):
         raise ValueError("节点 post.uniform_slices 的必填输入 duration 未连接")
 
     config = ctx.config
-    # 节点级参数覆盖
-    original_target = config.highlight.target_duration
-    try:
-        config.highlight.target_duration = params["slice_seconds"]
-        segments = uniform_slices(float(duration), config, count=params["count"])
-    finally:
-        config.highlight.target_duration = original_target
+    # 节点级参数覆盖（ctx.config 是节点级深拷贝，直接改写不影响全局）
+    config.highlight.target_duration = params["slice_seconds"]
+    segments = uniform_slices(float(duration), config, count=params["count"])
 
     return {"highlight": HighlightResult(
         segments=segments,

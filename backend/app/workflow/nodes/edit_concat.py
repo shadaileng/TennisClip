@@ -47,10 +47,12 @@ def run(ctx, params):
 
     config = ctx.config
 
-    # all_mode 覆盖
+    # all_mode 覆盖（批次 A2：函数式传递，禁止原地修改上游传入的 highlight）
     if params["all_mode"]:
-        highlight.all_highlights = True
-        highlight.target_duration = params["target_duration"]
+        highlight = highlight.model_copy(update={
+            "all_highlights": True,
+            "target_duration": params["target_duration"],
+        })
 
     hl_video = video_editor.edit_highlight_video(video, highlight, config)
 

@@ -10,7 +10,10 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app.utils.logger import get_logger
 from app.workflow.spec import get_spec, resolve_params
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -212,6 +215,26 @@ class WorkflowGraph:
                 resolve_params(spec.params, node.params)
             except ValueError as exc:
                 errors.append({"node": nid, "code": "R10", "message": str(exc)})
+
+        # R8 补充（批次 B2）：output.artifact 的 highlight 入边检查。
+        # 有 highlight 生产节点参与时缺连 → 阻断（ok=False）；
+        # 图中无 highlight 生产节点时缺连 → 仅 warning（不阻断，用户可能有意只要视频/报告）。
+        hl_producers = {
+            n.id for n in self._nodes_list
+            if get_spec(n.type) and any(p.name == "highlight" for p in get_spec(n.type).outputs)
+        }
+        for n in self._nodes_list:
+            if n.type == "output.artifact" and n.enabled:
+                hl_in_edges = [
+                    e for e in self.edges
+                    if e.to_node_id == n.id and e.to_port == "highlight"
+                ]
+                if not hl_in_edges:
+                    if hl_producers:
+                        errors.append({"node": n.id, "code": "R8",
+                                        "message": f"节点 {n.id}（output.artifact）缺少 highlight 入边，集锦将不出现在结果中"})
+                    else:
+                        logger.warning("workflow: 节点 {}（output.artifact）缺少 highlight 入边（无 highlight 生产节点，仅提示）", n.id)
 
         return {"ok": len(errors) == 0, "errors": errors}
 

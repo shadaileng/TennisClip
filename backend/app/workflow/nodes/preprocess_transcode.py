@@ -1,4 +1,7 @@
-"""预处理转码节点：封装 preprocess.preprocess + probe_video。"""
+"""预处理转码节点：封装 preprocess.preprocess + probe_video。
+
+批次 A1：ctx.config 为节点级深拷贝，参数覆盖直接改写、无需 try/finally 恢复。
+"""
 
 from __future__ import annotations
 
@@ -42,14 +45,10 @@ def run(ctx, params):
     config = ctx.config
     task_out = ctx.task_out
 
-    # 覆盖 config 参数（节点级参数优先于全局配置）
-    original_height = config.video.max_input_seconds
-    try:
-        config.video.max_input_seconds = params["max_input_seconds"]
-        processed_video = preprocess.preprocess(video_path, config, work_dir=task_out)
-        meta = preprocess.probe_video(processed_video)
-    finally:
-        config.video.max_input_seconds = original_height
+    # 节点级参数覆盖（ctx.config 是节点级深拷贝，直接改写不影响全局）
+    config.video.max_input_seconds = params["max_input_seconds"]
+    processed_video = preprocess.preprocess(video_path, config, work_dir=task_out)
+    meta = preprocess.probe_video(processed_video)
 
     duration = meta.get("duration") or 60.0
 

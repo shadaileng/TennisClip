@@ -133,6 +133,9 @@ def compile_from_legacy(
         _add_edge(_N_EDIT, "video", _N_OUTPUT, "video")
     if "report" in enabled_set and level != "all":
         _add_edge(_N_REPORT, "report", _N_OUTPUT, "report")
+    # 高光结果显式投影（批次 B2：执行器不再做兜底扫描，预置图必须连出 highlight→output.artifact）
+    if "highlight" in enabled_set:
+        _add_edge(_N_UNIFORM, "highlight", _N_OUTPUT, "highlight")
 
     graph = WorkflowGraph(name="default", nodes=nodes, edges=edges)
     graph.frozen = True

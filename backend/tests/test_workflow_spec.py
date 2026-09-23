@@ -106,6 +106,10 @@ def test_build_schema_json_serializable():
     json_str = json.dumps(schema, ensure_ascii=False)
     assert "test.schema_node" in json_str
 
+    # 批次 B1：schema 携带 on_failure 字段（默认 fail）
+    assert "on_failure" in node
+    assert node["on_failure"] == "fail"
+
 
 # ---------- TC-03: 重复注册同一 type 抛 ValueError ----------
 
@@ -213,12 +217,60 @@ def test_resolve_params_float_out_of_range():
         resolve_params(specs, {"threshold": 1.5})
 
 
+# ---------- 批次 A4: 自动发现注册（新增节点放文件即注册）----------
+
+def test_auto_discovery_registers_new_node(tmp_path, monkeypatch):
+    """nodes/ 包内新增模块导入后自动注册，无需改 __init__.py（批次 A4）。"""
+    from app.workflow import nodes as nodes_pkg
+    from app.workflow.spec import _FN_REGISTRY, _SPEC_REGISTRY
+
+    # 动态创建新节点模块文件（模拟"放文件即注册"）
+    module_path = tmp_path / "test_auto_node_tmp.py"
+    module_path.write_text(
+        'from app.workflow.spec import NodeSpec, Port, PortType, register\n'
+        '\n'
+        '@register(NodeSpec(\n'
+        '    type="test.auto_discovered",\n'
+        '    label="自动发现节点",\n'
+        '    category="test",\n'
+        '    description="",\n'
+        '    inputs=[],\n'
+        '    outputs=[Port(name="video", type=PortType.VIDEO)],\n'
+        '    params=[],\n'
+        '    stage="test",\n'
+        '))\n'
+        'def run(ctx, params):\n'
+        '    return {"video": ctx.video_path}\n',
+        encoding="utf-8",
+    )
+
+    # 将 tmp_path 临时挂到 nodes 包路径上，使 pkgutil 能发现新模块
+    import sys
+    monkeypatch.setattr(nodes_pkg, "__path__", list(nodes_pkg.__path__) + [str(tmp_path)])
+    module_name = f"{nodes_pkg.__name__}.test_auto_node_tmp"
+    if module_name in sys.modules:
+        del sys.modules[module_name]
+
+    try:
+        import importlib
+        importlib.import_module(module_name)
+        # 新模块导入即注册
+        assert "test.auto_discovered" in _SPEC_REGISTRY
+        assert "test.auto_discovered" in _FN_REGISTRY
+        # 现有节点不受影响
+        assert "input.video" in _SPEC_REGISTRY
+    finally:
+        module_path.unlink(missing_ok=True)
+        sys.modules.pop(module_name, None)
+
+
 # ---------- TC-05: 端口类型常量唯一 ----------
 
 def test_port_type_constants_unique():
-    """端口类型常量值唯一，且同名端口的 PortType 一致。"""
+    """端口类型常量值唯一（含批次 A3 新增的 TRACK/COURT/POSE），且同名端口的 PortType 一致。"""
     values = [PortType.VIDEO, PortType.DURATION, PortType.CANDIDATES,
-              PortType.HIGHLIGHT, PortType.REPORT]
+              PortType.HIGHLIGHT, PortType.REPORT,
+              PortType.TRACK, PortType.COURT, PortType.POSE]
     # 各常量值唯一
     assert len(values) == len(set(values))
     # 同名端口类型一致

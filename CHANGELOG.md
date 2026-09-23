@@ -4,6 +4,18 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.13.0] - 2026-09-23
+
+### Added
+
+- 工作流独立性加固（方案 12 · Step 0 批次 A）：执行器每节点深拷贝 config 隔离改写；端口值函数式传递（`model_copy`）禁止原地修改上游输出；运行时端口类型校验（`PORT_PY_TYPES` / `validate_port_value`，store 与 resolve 双向），并预登记 `track`/`court`/`pose` 端口类型
+- 节点失败策略 `NodeSpec.on_failure`（`fail` 默认 / `skip`）：skip 节点失败后自身与下游级联标记 skipped、任务保持成功，为 CV 感知层节点降级铺路
+- 节点自动发现注册：`nodes/__init__.py` 改为 `pkgutil` 扫描，新增节点放文件即注册
+
+### Fixed
+
+- 预置工作流图补连 `highlight → output.artifact`（此前依赖执行器隐式兜底投影掩盖）；移除兜底扫描，改由 `validate()` 校验期 R8 检查缺连（有高光生产节点时阻断）
+
 ## [0.12.0] - 2026-09-21
 
 ### Added

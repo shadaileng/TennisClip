@@ -1,4 +1,8 @@
-"""信号候选定位节点：封装 event_detect.detect_candidates。"""
+"""信号候选定位节点：封装 event_detect.detect_candidates。
+
+批次 A1：ctx.config 为执行器注入的节点级深拷贝，节点内改写天然隔离，
+无需 try/finally 恢复反模式。
+"""
 
 from __future__ import annotations
 
@@ -44,19 +48,13 @@ def run(ctx, params):
         raise ValueError("节点 detect.candidates 的必填输入 duration 未连接")
 
     config = ctx.config
-    # 节点级参数覆盖
-    original_mode = config.highlight.candidate_mode
-    original_top_n = config.highlight.candidate_top_n
-    try:
-        config.highlight.candidate_mode = params["mode"]
-        config.highlight.candidate_top_n = params["top_n"]
-        # top_n=0 表示放开上限（None）
-        effective_top_n = None if params["top_n"] == 0 else params["top_n"]
-        candidates = event_detect.detect_candidates(
-            video, config, float(duration), top_n=effective_top_n
-        )
-    finally:
-        config.highlight.candidate_mode = original_mode
-        config.highlight.candidate_top_n = original_top_n
+    # 节点级参数覆盖（ctx.config 是节点级深拷贝，改写不影响其他节点/全局）
+    config.highlight.candidate_mode = params["mode"]
+    config.highlight.candidate_top_n = params["top_n"]
+    # top_n=0 表示放开上限（None）
+    effective_top_n = None if params["top_n"] == 0 else params["top_n"]
+    candidates = event_detect.detect_candidates(
+        video, config, float(duration), top_n=effective_top_n
+    )
 
     return {"candidates": candidates}

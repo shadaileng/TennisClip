@@ -462,3 +462,333 @@ def test_db_hooks_called(tmp_path, monkeypatch):
 
     assert calls["start"] == 1
     assert calls["finish"] == 1
+
+
+# ---------- 批次 A/B 独立性加固（文档 12 · Step 0）----------
+
+def _make_result(task_id: str = "indep_test") -> SimpleNamespace:
+    return SimpleNamespace(
+        task_id=task_id, stage="pending", status="pending",
+        highlight=None, report=None, highlight_video_path=None,
+        report_path=None, report_error=None, error=None, elapsed_seconds=0.0,
+    )
+
+
+# ---------- S0-1: 批次 A1 节点级 config 隔离 ----------
+
+def test_config_isolation_per_node(tmp_path, monkeypatch):
+    """节点内改写 ctx.config 不影响其他节点与全局配置（批次 A1 深拷贝隔离）。"""
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+
+    seen_configs = []
+    seen_global_before = None
+
+    def fn_a(ctx, params):
+        seen_configs.append(ctx.config)
+        # 模拟节点改写 config（新契约：直接改，无需 try/finally 恢复）
+        ctx.config.highlight.candidate_mode = "audio"
+        ctx.config.video.max_input_seconds = 9999
+        return {"video": ctx.video_path, "duration": 60.0}
+
+    def fn_b(ctx, params):
+        seen_configs.append(ctx.config)
+        return {"candidates": []}
+
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "input.video", lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "preprocess.transcode", fn_a)
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "detect.candidates", fn_b)
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "analyze.highlight",
+                        lambda c, p: {"highlight": HighlightResult(segments=[])})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "edit.concat",
+                        lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "report.technical",
+                        lambda c, p: {"report": None})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "output.artifact", lambda c, p: {})
+
+    g = _default_graph_dict()
+    graph = WorkflowGraph.from_dict(g)
+    global_config = AppConfig()
+    global_config.highlight.candidate_mode = "motion"
+    global_config.video.max_input_seconds = 12345
+    executor = Executor(graph, global_config, _make_result("cfg_isolation"))
+    executor.execute(tmp_path / "test.mp4")
+
+    # 节点看到的 config 互相独立、也与全局配置独立
+    assert seen_configs[0] is not seen_configs[1]
+    # 节点 A 的改写未污染节点 B 的视图
+    assert seen_configs[1].highlight.candidate_mode == "motion"
+    assert seen_configs[1].video.max_input_seconds == 12345
+    # 全局配置未被任何节点改写
+    assert global_config.highlight.candidate_mode == "motion"
+    assert global_config.video.max_input_seconds == 12345
+
+
+# ---------- S0-2: 批次 A2 值不可变传递（并联分支互不污染）----------
+
+def test_highlight_branches_do_not_pollute(tmp_path, monkeypatch):
+    """两分支共享同一 highlight 时，各分支的 model_copy 结果互不污染（批次 A2）。"""
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+
+    shared = HighlightResult(
+        segments=[Segment(start=1, end=5, label="ace", confidence=0.9)],
+        all_highlights=False,
+    )
+
+    def fn_edit(ctx, params):
+        hl = ctx.inputs.get("highlight")
+        return {"highlight": hl.model_copy(update={"all_highlights": True})}
+
+    def fn_post(ctx, params):
+        hl = ctx.inputs.get("highlight")
+        # 模拟 post.filter_segments：过滤后生成新对象
+        filtered = hl.model_copy(update={"segments": [s for s in hl.segments if s.label != "other"]})
+        return {"highlight": filtered}
+
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "input.video", lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "preprocess.transcode",
+                        lambda c, p: {"video": c.video_path, "duration": 60.0})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "detect.candidates",
+                        lambda c, p: {"candidates": []})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "analyze.highlight",
+                        lambda c, p: {"highlight": shared})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "edit.concat", fn_edit)
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "post.filter_segments", fn_post)
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "report.technical", lambda c, p: {"report": None})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "output.artifact", lambda c, p: {})
+
+    # 图：analyze.highlight 的 highlight 同时连向 edit.concat 与 post.filter_segments（并联）
+    g = _default_graph_dict()
+    g["nodes"].append({"id": "n8", "type": "post.filter_segments", "params": {}, "enabled": True})
+    g["edges"].append({"id": "e14", "from": ["n4", "highlight"], "to": ["n8", "highlight"]})
+    graph = WorkflowGraph.from_dict(g)
+    executor = Executor(graph, AppConfig(), _make_result("branch_iso"))
+    executor.execute(tmp_path / "test.mp4")
+
+    # 共享对象本身未被任何分支原地修改
+    assert shared.all_highlights is False
+    assert len(shared.segments) == 1
+
+
+# ---------- S0-3: 批次 A3 运行时端口值类型校验 ----------
+
+def test_runtime_port_type_validation_on_store(tmp_path, monkeypatch):
+    """节点输出端口值类型错误 → store 期抛 TypeError，任务 FAILED 且 error 含端口类型校验信息（批次 A3）。
+
+    校验发生在 executor 的 store 期（而非节点深处），错误定位到具体节点与端口；
+    默认 on_failure=fail 语义下任务整体 FAILED。
+    """
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+
+    def bad_output(ctx, params):
+        # highlight 端口应输出 HighlightResult，这里故意输出 str
+        return {"highlight": "不是 HighlightResult"}
+
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "input.video", lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "preprocess.transcode",
+                        lambda c, p: {"video": c.video_path, "duration": 60.0})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "detect.candidates", lambda c, p: {"candidates": []})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "analyze.highlight", bad_output)
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "edit.concat",
+                        lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "report.technical", lambda c, p: {"report": None})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "output.artifact", lambda c, p: {})
+
+    g = _default_graph_dict()
+    graph = WorkflowGraph.from_dict(g)
+    result = _make_result("type_check")
+    executor = Executor(graph, AppConfig(), result)
+    executor.execute(tmp_path / "test.mp4")
+
+    # 任务失败（on_failure=fail 默认），且失败信息定位到 n4（analyze.highlight）与其端口
+    assert result.status == "failed"
+    assert "n4" in result.error
+    assert "highlight" in result.error
+    # 错误来自 store 期端口值类型校验（而非节点内部逻辑）
+    assert "值类型不匹配" in result.error
+    statuses = {n.node_id: n.status for n in result.workflow_nodes}
+    assert statuses["n4"] == "failed"
+
+
+def test_validate_port_value_unit():
+    """validate_port_value 单元行为：None 跳过 / 未登记类型跳过 / 匹配通过 / 错配抛错。"""
+    from app.workflow.spec import validate_port_value, PortType
+    from app.models import HighlightResult
+
+    # None 跳过
+    validate_port_value(PortType.HIGHLIGHT, None)
+    # 未登记类型跳过（向后兼容）
+    validate_port_value("unknown.type", object())
+    # 匹配通过
+    validate_port_value(PortType.HIGHLIGHT, HighlightResult(segments=[]))
+    # 错配抛 TypeError（错误信息含端口名、期望类型、实际类型）
+    with pytest.raises(TypeError, match="值类型不匹配"):
+        validate_port_value(PortType.HIGHLIGHT, "oops")
+
+
+# ---------- S0-4: 批次 B1 失败降级与级联跳过 ----------
+
+def test_on_failure_skip_cascades_downstream(tmp_path, monkeypatch):
+    """on_failure=skip 节点失败 → 本节点与下游 skipped，任务仍 SUCCEEDED（批次 B1）。"""
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+    from app.workflow.spec import NodeSpec, Port, PortType, register
+
+    # 注册一个可失败测试节点：失败策略 skip
+    @register(
+        NodeSpec(
+            type="test.fail_cascade",
+            label="失败级联测试",
+            category="test",
+            description="",
+            inputs=[Port(name="duration", type=PortType.DURATION)],
+            outputs=[Port(name="highlight", type=PortType.HIGHLIGHT)],
+            params=[],
+            stage="testing",
+            on_failure="skip",
+        )
+    )
+    def _cascade(ctx, params):
+        raise RuntimeError("模拟 CV 节点失败（如 TrackNet 缺 GPU）")
+
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "input.video", lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "preprocess.transcode",
+                        lambda c, p: {"video": c.video_path, "duration": 60.0})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "test.fail_cascade", _cascade)
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "edit.concat",
+                        lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "output.artifact", lambda c, p: {})
+
+    # 图：preprocess → test.fail_cascade → edit.concat（edit.concat 必填 highlight 来自失败节点）
+    g = {
+        "version": 1,
+        "name": "失败级联",
+        "nodes": [
+            {"id": "n1", "type": "input.video", "params": {}, "enabled": True},
+            {"id": "n2", "type": "preprocess.transcode", "params": {}, "enabled": True},
+            {"id": "n3", "type": "test.fail_cascade", "params": {}, "enabled": True},
+            {"id": "n5", "type": "edit.concat", "params": {}, "enabled": True},
+            {"id": "n7", "type": "output.artifact", "params": {}, "enabled": True},
+        ],
+        "edges": [
+            {"id": "e1", "from": ["n1", "video"], "to": ["n2", "video"]},
+            {"id": "e2", "from": ["n2", "duration"], "to": ["n3", "duration"]},
+            {"id": "e3", "from": ["n3", "highlight"], "to": ["n5", "highlight"]},
+            {"id": "e4", "from": ["n2", "video"], "to": ["n5", "video"]},
+            {"id": "e5", "from": ["n3", "highlight"], "to": ["n7", "highlight"]},
+            {"id": "e6", "from": ["n5", "video"], "to": ["n7", "video"]},
+        ],
+    }
+    graph = WorkflowGraph.from_dict(g)
+    result = _make_result("cascade_test")
+    executor = Executor(graph, AppConfig(), result)
+    executor.execute(tmp_path / "test.mp4")
+
+    # 任务成功（skip 策略不拖垮任务）
+    assert result.status == "succeeded"
+    statuses = {n.node_id: n.status for n in result.workflow_nodes}
+    assert statuses["n3"] == "skipped"      # 失败节点自身
+    assert statuses["n5"] == "skipped"      # 下游级联跳过（必填 highlight 来自死亡节点）
+    assert statuses["n7"] == "skipped"      # 再下游同样级联（n5.video 未产出 → n7.video 缺失）
+    assert statuses["n1"] == "done"
+    assert statuses["n2"] == "done"
+
+
+def test_on_failure_fail_propagates_to_task_failed(tmp_path, monkeypatch):
+    """on_failure=fail（默认）节点失败 → 任务 FAILED（向后兼容，与既有 TC-26 语义一致）。"""
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+
+    def fail_fn(ctx, params):
+        raise RuntimeError("处理出错")
+
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "preprocess.transcode", fail_fn)
+    g = _default_graph_dict()
+    graph = WorkflowGraph.from_dict(g)
+    result = _make_result("fail_default")
+    executor = Executor(graph, AppConfig(), result)
+    executor.execute(tmp_path / "test.mp4")
+
+    assert result.status == "failed"
+    assert "n2" in result.error
+
+
+def test_skip_cascade_does_not_affect_live_none_output(tmp_path, monkeypatch):
+    """上游节点正常执行但输出 None（如 report all 档位）→ 不级联跳过下游（批次 B1 语义边界）。"""
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+
+    # report.technical all 档位返回 {"report": None}（节点正常执行、输出 None）
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "input.video", lambda c, p: {"video": c.video_path})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "preprocess.transcode",
+                        lambda c, p: {"video": c.video_path, "duration": 60.0})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "detect.candidates", lambda c, p: {"candidates": []})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "analyze.highlight",
+                        lambda c, p: {"highlight": HighlightResult(segments=[], all_highlights=True)})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "edit.concat",
+                        lambda c, p: {"video": c.video_path, "highlight": c.inputs.get("highlight")})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "report.technical", lambda c, p: {"report": None})
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "output.artifact", lambda c, p: {})
+
+    g = _default_graph_dict()
+    graph = WorkflowGraph.from_dict(g)
+    result = _make_result("live_none")
+    executor = Executor(graph, AppConfig(), result)
+    executor.execute(tmp_path / "test.mp4")
+
+    # report 节点正常执行（输出 None），其下游 output.artifact 仍执行
+    assert result.status == "succeeded"
+    statuses = {n.node_id: n.status for n in result.workflow_nodes}
+    assert statuses["n6"] == "done"      # report.technical 正常完成
+    assert statuses["n7"] == "done"      # output 未级联跳过
+
+
+# ---------- S0-5: 批次 B2 校验期提示 output.artifact 缺 highlight 入边 ----------
+
+def test_validate_warns_output_artifact_missing_highlight_edge():
+    """output.artifact 缺 highlight 入边且图中有 highlight 生产节点 → R8 阻断（批次 B2 校验期提示）。"""
+    g = _default_graph_dict()
+    # 删除 highlight→output.artifact 的连线（e13）；n4（analyze.highlight）仍产出 highlight
+    g["edges"] = [e for e in g["edges"] if e["id"] != "e13"]
+    graph = WorkflowGraph.from_dict(g)
+    result = graph.validate()
+    assert result["ok"] is False
+    assert any(e.get("code") == "R8" and "highlight" in e["message"]
+               for e in result["errors"]), f"未检出 R8 缺连告警: {result['errors']}"
+
+
+def test_validate_no_warning_when_no_highlight_producer():
+    """无 highlight 生产节点且 output.artifact 无 highlight 连线 → 仅 warning 不阻断。
+
+    构造完整合法图：去掉所有 highlight 生产/消费节点（analyze.highlight /
+    post.uniform_slices / edit.concat / report.technical），仅保留 input →
+    preprocess → output，图中既无 highlight 生产者也无 highlight 连线。
+    """
+    g = {
+        "version": 1,
+        "name": "无 highlight 图",
+        "nodes": [
+            {"id": "n1", "type": "input.video", "params": {}, "enabled": True},
+            {"id": "n2", "type": "preprocess.transcode", "params": {}, "enabled": True},
+            {"id": "n7", "type": "output.artifact", "params": {}, "enabled": True},
+        ],
+        "edges": [
+            {"id": "e1", "from": ["n1", "video"], "to": ["n2", "video"]},
+            {"id": "e2", "from": ["n2", "video"], "to": ["n7", "video"]},
+        ],
+    }
+    graph = WorkflowGraph.from_dict(g)
+    result = graph.validate()
+    # 不阻断（无 highlight 生产节点，缺连仅是 warning 不入 errors）
+    assert result["ok"] is True, f"无 highlight 生产节点时缺连不应阻断: {result['errors']}"
+
+
+def test_validate_default_graph_no_r8():
+    """完整默认图（含 highlight→output.artifact 连线）不应出现 R8 告警。"""
+    graph = WorkflowGraph.from_dict(_default_graph_dict())
+    result = graph.validate()
+    assert result["ok"] is True, f"默认图应通过校验: {result['errors']}"
+    assert not any(e.get("code") == "R8" and "highlight" in e["message"]
+                   for e in result["errors"])

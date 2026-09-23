@@ -42,25 +42,29 @@ def run(ctx, params):
     raw_labels = params.get("exclude_labels", "")
     excluded = {l.strip() for l in raw_labels.split(",") if l.strip()} if raw_labels else EXCLUDED_LABELS
 
+    # 批次 A2：函数式传递，过滤结果生成新对象，禁止原地修改上游传入的 highlight
+    segments = list(highlight.segments)
+
     # 最小置信度过滤
     min_conf = params["min_confidence"]
-    highlight.segments = [
-        s for s in highlight.segments
+    segments = [
+        s for s in segments
         if s.confidence >= min_conf
     ]
 
     # 排除标签过滤
-    highlight.segments = [
-        s for s in highlight.segments
+    segments = [
+        s for s in segments
         if s.label not in excluded
     ]
 
     # 最小时长过滤
     min_dur = params["min_duration"]
     if min_dur > 0:
-        highlight.segments = [
-            s for s in highlight.segments
+        segments = [
+            s for s in segments
             if (s.end - s.start) >= min_dur
         ]
 
-    return {"highlight": highlight}
+    filtered = highlight.model_copy(update={"segments": segments})
+    return {"highlight": filtered}
