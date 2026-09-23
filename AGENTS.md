@@ -46,7 +46,7 @@ TennisClip/
 ├── frontend/                 # Vue 3 / Vite / Pinia / Tailwind
 │   ├── src/
 │   │   ├── main.js / App.vue
-│   │   ├── components/       # HealthBar / UploadPanel / TaskCard / VideoPlayer / ReportView / ProviderManageModal / StrategyModal
+│   │   ├── components/       # HealthBar / UploadPanel / TaskCard / VideoPlayer / ReportView / ProviderManageModal / WorkflowPanel / WorkflowCanvas / TaskHistory
 │   │   ├── lib/api.js        # 后端 API 客户端
 │   │   └── stores/task.js    # Pinia 任务状态（轮询）
 │   ├── index.html / vite.config.js / tailwind.config.js / postcss.config.js
@@ -107,7 +107,7 @@ TennisClip/
 | PUT | `/api/v1/db/providers/{id}` | 编辑服务商（按 id 定位；api_key 留空表示保留原值；重复名 409） |
 | DELETE | `/api/v1/db/providers/{id}` | 删除服务商（被 `ai.provider` 直选引用时返回 409） |
 | POST | `/api/v1/db/providers/check-models` | 校验模型可用性：body 传 `base_url`/`api_key`/`models`，返回 list（GET /models）或逐模型 probe（chat/completions）结果 |
-| GET | `/api/v1/config` | 配置 KV 列表（ai.* 服务商配置；**pipeline 类**：`highlight.level`/`llm.analysis_mode`/`pipeline.stages`；select 项含动态选项、secret 掩码、source 标明 db/config/env/builtin） |
+| GET | `/api/v1/config` | 配置 KV 列表（ai.* 服务商配置；**pipeline 类**：`llm.analysis_level`/`llm.highlight_strategy`/`pipeline.stages`（旧键 `highlight.level`/`llm.analysis_mode` 读回退兼容存量行）；select 项含动态选项、secret 掩码、source 标明 db/config/env/builtin） |
 | PUT | `/api/v1/config/{key}` | 设置配置覆盖（如 `ai.provider` 切换服务商、`ai.model` 覆盖模型；**`pipeline.stages` 写入时校验 JSON 数组且元素 ∈ {preprocess,highlight,edit,report}，非法返回 400**；secret 空值=保留、等于默认值=自动删行） |
 | DELETE | `/api/v1/config/{key}` | 删除配置覆盖（恢复默认值） |
 | GET | `/api/v1/workflows` | 工作流预设列表（含 `is_active` 标记） |
@@ -123,7 +123,7 @@ TennisClip/
 
 - 激活服务商与选定模型不再存于 provider 行内，而是由 `system_config` 配置 KV 表覆盖：`ai.provider`（直选生效服务商，值可为某服务商名或 `custom`）、`ai.model`（覆盖所选服务商的默认模型，空=跟随默认）；另含 `ai.api_key`/`ai.base_url` 供 `custom` 独立配置。配置 KV 子系统由 `app/config_registry.py`（最小注册表）+ `app/services/config_service.py`（`get_ai_config`/`mask_secret`/配置覆盖）封装。
 - 生效服务商的唯一事实来源为配置 KV `ai.provider`：运行时 LLM 调用（`app/utils/llm.py`）、`/health` 与启动自检（`app/utils/environment.py`）均经 `config_service.get_ai_config(config)` 解析——命中启用服务商则引用其 `api_key`/`base_url`、`model` 取 `ai.model` 覆盖或 `default_model`，否则回落静态 `config.active_provider`（DB 故障返回 `None` 由调用方降级，继续回落静态配置）。原 `db_service.get_active_provider()` 已移除。
-- 管线全局策略同样走配置 KV 子系统（**不新增表、不需 Alembic 迁移**），由前端「策略调整」模态框（`frontend/src/components/StrategyModal.vue`）一键持久化，影响之后所有任务：
+- 管线全局策略同样走配置 KV 子系统（**不新增表、不需 Alembic 迁移**），经 `PUT /api/v1/config/{key}` 持久化（原「策略调整」模态框已随 d29dfae 移除，交互态策略主要由工作流节点参数承载；本节 KV 值作用于默认工作流图编译与旧管线路径），影响之后所有任务：
   - `llm.analysis_level`（分析层级：beginner/intermediate/professional/all，默认 intermediate）— 高光识别与报告的分析深度，`all`=所有高光回合（仅剪辑拼接、不生成技术分析报告）。
   - `llm.highlight_strategy`（高光识别媒体输入策略：frame=抽帧/video=视频理解，默认 frame）— 经 `app/utils/media_strategies.py` 的策略注册表分发；`video` 模式将整段 MP4 以 `data:video/mp4;base64,...` 内联为单个 `video_url` 块直送（置于文本之前），>128MB 仅 `logger.warning` 不切片，候选窗口作为软提示（模型自由定位），后处理仅做时长合法性 + 准备段过滤；`frame` 模式保持原抽帧行为零回归。`report` 固定 `analysis_mode="frame"` 不受影响。
   - `pipeline.stages`（启用的管线阶段有序 JSON 数组，默认 `["preprocess","highlight","edit","report"]`）— `config_service.set_config_value` 校验 JSON 数组且元素 ∈ 合法集合（非法 400），解析时按固定顺序重排。

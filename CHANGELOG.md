@@ -4,6 +4,19 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.14.1] - 2026-09-23
+
+### Added
+
+- 新增 `tests/test_config_legacy_keys.py` 6 用例（旧键回退/新键优先/列表透出/写迁移/默认值清行/双键删除）+ `test_pipeline.py` 2 用例（可用模型段保留、all 档兜底切满全程），全量 229 测试通过
+
+### Fixed
+
+- 均匀切片兜底改为"先过滤准备段、仅在无可用高光时触发"：训练类视频模型产出可用段（如 rally 6.6–114.9）不再被无条件覆盖，全量拼接（`edit.concat all_mode`）不再缩水成 15 秒
+- 均匀切片按档位定长：all 档位每段 = duration/count 切满全程；普通档位维持 target_duration/count 均分散布
+- 配置键对齐（b352955 重命名遗留的 DB 孤儿行）：`llm.analysis_level`/`llm.highlight_strategy` 读取回退旧键 `highlight.level`/`llm.analysis_mode`，写入时孤儿行原地迁移、删除时双键清理；前端 `stores/task.js` 同步读取新键（旧键兼容保留）
+- AGENTS.md 契约同步：`/api/v1/config` pipeline 类键名更正；移除已删除的 StrategyModal 过期引用（d29dfae）
+
 ## [0.14.0] - 2026-09-23
 
 ### Added

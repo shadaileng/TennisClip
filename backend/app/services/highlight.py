@@ -165,9 +165,12 @@ def find_highlights(
         _exclude_prep(highlight, config, _final_cands)
     else:
         _clamp_segments(highlight, config, duration_seconds, max_segments=sel["max_segments"], cap=not all_highlights)
-        _maybe_uniform_slices(highlight, config, duration_seconds)
-        # 准备段后过滤（无候选时仅按 label/置信度过滤）
+        # 先过滤准备段/低置信段，再兜底：仅在无可用高光时才改用均匀切片。
+        # 若在过滤前抢跑，会把模型返回的可用段无条件覆盖掉（训练场景 + all 档位下
+        # 切片总时长只有 target_duration(15s)，全量拼接结果只有 15 秒）。
         _exclude_prep(highlight, config, [])
+        if not highlight.segments:
+            _maybe_uniform_slices(highlight, config, duration_seconds)
     logger.info(
         "highlight: {} segments (level={} all={} mode={})",
         len(highlight.segments), level, all_highlights, mode,
@@ -199,23 +202,35 @@ def _candidates_degenerate(candidates: list[Segment], duration: Optional[float])
 def _maybe_uniform_slices(
     highlight: HighlightResult, config: AppConfig, duration: Optional[float]
 ) -> None:
-    """练习/训练类视频：用均匀切片替换模型整段 other，使集锦覆盖全程。
+    """练习/训练类视频：无可用高光时的兜底，用均匀切片覆盖全程。
 
     仅当 scene_type 属于非比赛类、且提供了时长时生效；比赛类（match）保留模型高光筛选。
+    all 档位（highlight.all_highlights）切满全程（每段 = duration/count），
+    避免兜底结果总时长被 target_duration 焊死在 15 秒。
     """
     if not duration or highlight.scene_type not in _UNIFORM_SCENE_TYPES:
         return
-    highlight.segments = _uniform_slices(duration, config)
+    full = bool(highlight.all_highlights)
+    highlight.segments = _uniform_slices(duration, config, full=full)
     logger.info(
-        "highlight: scene_type={} 改用均匀切片 {} 段（覆盖全程，避免仅裁开头）",
+        "highlight: scene_type={} 改用均匀切片 {} 段（{}）",
         highlight.scene_type, len(highlight.segments),
+        "all 档位切满全程" if full else "覆盖全程，避免仅裁开头",
     )
 
 
-def _uniform_slices(duration: float, config: AppConfig) -> list[Segment]:
-    """把集锦目标时长均分成 max_segments 段、均匀散布于视频全程。"""
+def _uniform_slices(duration: float, config: AppConfig, full: bool = False) -> list[Segment]:
+    """把视频均分成 max_segments 段、均匀散布于全程。
+
+    full=False（普通档位）：每段 = target_duration/count，总和约为集锦目标时长；
+    full=True（all 档位）：每段 = duration/count，切满视频全程。
+    """
     count = max(1, config.highlight.max_segments)
-    slice_len = max(config.highlight.min_segment_seconds, config.highlight.target_duration / count)
+    slice_len = (
+        duration / count
+        if full
+        else max(config.highlight.min_segment_seconds, config.highlight.target_duration / count)
+    )
     slices = []
     for i in range(count):
         center = duration * (i + 0.5) / count

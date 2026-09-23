@@ -28,8 +28,8 @@ export const useTaskStore = defineStore('task', {
     managing: false, // 模型管理弹窗开关
     manageError: null,
     manageSaving: false,
-    defaultLevel: 'intermediate', // 分析层级全局默认（highlight.level）
-    analysisMode: 'frame',         // 分析模式全局默认（llm.analysis_mode）
+    defaultLevel: 'intermediate', // 分析层级全局默认（llm.analysis_level，旧键 highlight.level 兼容）
+    analysisMode: 'frame',         // 分析模式全局默认（llm.highlight_strategy，旧键 llm.analysis_mode 兼容）
     pipelineStages: null,         // 启用阶段有序列表（pipeline.stages，JSON 数组）
     // —— 历史任务 ——
     tasks: [],              // 历史任务列表（来自 /api/v1/db/tasks）
@@ -99,8 +99,8 @@ export const useTaskStore = defineStore('task', {
         for (const it of items) {
           if (it.key === 'ai.provider') this.aiProvider = it.value || 'custom'
           else if (it.key === 'ai.model') this.aiModel = it.value || ''
-          else if (it.key === 'highlight.level') this.defaultLevel = it.value || 'intermediate'
-          else if (it.key === 'llm.analysis_mode') this.analysisMode = it.value || 'frame'
+          else if (it.key === 'llm.analysis_level' || it.key === 'highlight.level') this.defaultLevel = it.value || 'intermediate'
+          else if (it.key === 'llm.highlight_strategy' || it.key === 'llm.analysis_mode') this.analysisMode = it.value || 'frame'
           else if (it.key === 'pipeline.stages') {
             try {
               this.pipelineStages = JSON.parse(it.value)

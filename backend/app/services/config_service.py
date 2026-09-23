@@ -39,6 +39,25 @@ log = get_logger("config")
 
 MASK_PLACEHOLDER = "****"
 
+# b352955 配置键重命名遗留的旧 key → 新 key 别名：
+# 读取时回退旧 key（兼容存量 DB 孤儿行），写入时把孤儿行原地迁移为新 key、
+# 删除时一并清理，避免"恢复默认"后旧键值顶回来。
+LEGACY_KEY_ALIASES: dict[str, str] = {
+    "llm.analysis_level": "highlight.level",
+    "llm.highlight_strategy": "llm.analysis_mode",
+}
+
+
+def _find_override_row(db: Session, key: str) -> Optional[SystemConfig]:
+    """查覆盖行：新 key 优先，缺失时回退旧 key 别名（存量孤儿行兼容）。"""
+    row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    if row is not None:
+        return row
+    legacy = LEGACY_KEY_ALIASES.get(key)
+    if legacy:
+        return db.query(SystemConfig).filter(SystemConfig.key == legacy).first()
+    return None
+
 
 def mask_secret(value: str) -> str:
     """通用敏感值掩码：{前3位}****{末4位}；过短或空值返回掩码/空串。
@@ -76,11 +95,11 @@ def _get_override_value(db: Session, key: str) -> Optional[str]:
 
 
 def get_config_value(db: Session, key: str, config: Any = None) -> str:
-    """读取生效值：DB 覆盖 > 默认值。"""
+    """读取生效值：DB 覆盖 > 默认值（旧 key 别名行参与回退）。"""
     item = find_config_item(key, config or _load_config())
     if item is None:
         return ""
-    row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    row = _find_override_row(db, key)
     return row.value if row is not None and row.value is not None else item.default
 
 
@@ -131,7 +150,7 @@ def set_config_value(db: Session, key: str, value: str, config: Any = None) -> d
     if not item.editable:
         raise HTTPException(status_code=403, detail=f"配置项 {item.label} 不可动态编辑")
 
-    row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    row = _find_override_row(db, key)
 
     if item.value_type == VALUE_TYPE_SECRET:
         current = row.value if row is not None else item.default
@@ -146,9 +165,24 @@ def set_config_value(db: Session, key: str, value: str, config: Any = None) -> d
 
     normalized = _validate_value(item, value)
 
+    # 旧 key 孤儿行处理：读到的孤儿行原地迁移为新 key（新 key 此时必无行，唯一约束安全）；
+    # 与新 key 行并存的孤儿行视为过期残留，随本次写入一并清理（autoflush 保证改名先生效）。
+    legacy_key = LEGACY_KEY_ALIASES.get(key)
+    stale_legacy = None
+    if legacy_key:
+        if row is not None and row.key != key:
+            row.key = key
+        stale_legacy = db.query(SystemConfig).filter(SystemConfig.key == legacy_key).first()
+
     if normalized == item.default:
+        changed = False
         if row is not None:
             db.delete(row)
+            changed = True
+        if stale_legacy is not None:
+            db.delete(stale_legacy)
+            changed = True
+        if changed:
             db.commit()
     else:
         if row is None:
@@ -156,19 +190,29 @@ def set_config_value(db: Session, key: str, value: str, config: Any = None) -> d
             db.add(row)
         else:
             row.value = normalized
+        if stale_legacy is not None:
+            db.delete(stale_legacy)
         db.commit()
 
     return _build_item(db, key, config)
 
 
 def delete_config_value(db: Session, key: str, config: Any = None) -> dict[str, Any]:
-    """删除覆盖行（恢复默认）。"""
+    """删除覆盖行（恢复默认）；旧 key 别名行一并清理，防止回退读顶回旧值。"""
     item = find_config_item(key, config or _load_config())
     if item is None:
         raise HTTPException(status_code=404, detail=f"配置项不存在: {key}")
-    row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
-    if row is not None:
-        db.delete(row)
+    keys = [key]
+    legacy = LEGACY_KEY_ALIASES.get(key)
+    if legacy:
+        keys.append(legacy)
+    deleted = False
+    for k in keys:
+        row = db.query(SystemConfig).filter(SystemConfig.key == k).first()
+        if row is not None:
+            db.delete(row)
+            deleted = True
+    if deleted:
         db.commit()
     return _build_item(db, key, config)
 
@@ -283,11 +327,11 @@ def _item_options(db: Session, item) -> Optional[list[str]]:
 
 
 def _build_item(db: Session, key: str, config: Any = None) -> dict[str, Any]:
-    """构造单个配置项响应（合并覆盖值 + 掩码 + 来源状态）。"""
+    """构造单个配置项响应（合并覆盖值 + 掩码 + 来源状态，旧 key 别名行参与回退）。"""
     item = find_config_item(key, config or _load_config())
     if item is None:
         raise HTTPException(status_code=404, detail=f"配置项不存在: {key}")
-    row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    row = _find_override_row(db, key)
     default = item.default
     is_secret = item.value_type == VALUE_TYPE_SECRET
 

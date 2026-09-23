@@ -183,6 +183,54 @@ def test_find_highlights_training_uses_uniform_slices(tmp_path, monkeypatch):
         assert (seg.end - seg.start) >= 3
 
 
+def test_find_highlights_training_keeps_model_segments(tmp_path, monkeypatch):
+    """训练类 + 模型产出可用高光时保留模型段，不被均匀切片无条件覆盖。
+
+    回归：任务 a48fb0995127（LLM_Video 图，level=intermediate + all_mode 剪辑）中
+    模型给出 6.6–114.9 的可用段，却被均匀切片（3×target_duration/3=15s）覆盖，
+    全量模式输出只有 15 秒。
+    """
+    from app.services import highlight as highlight_svc
+
+    monkeypatch.setattr(highlight_svc.event_detect, "detect_candidates", lambda *a, **k: [])
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [{"start": 6.6, "end": 114.9, "label": "rally", "confidence": 0.9}],
+            "scene_type": "training",
+            "reasoning": "全程对练",
+        },
+    )
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=121.5, level="intermediate",
+    )
+    assert len(hl.segments) == 1, "可用模型段应保留，不被均匀切片覆盖"
+    assert hl.segments[0].start == 6.6
+    assert hl.segments[0].end == 114.9
+
+
+def test_find_highlights_all_mode_uniform_covers_full_duration(tmp_path, monkeypatch):
+    """all 档位兜底均匀切片应切满全程（总时长≈duration），而非 target_duration(15s)。"""
+    from app.services import highlight as highlight_svc
+
+    monkeypatch.setattr(highlight_svc.event_detect, "detect_candidates", lambda *a, **k: [])
+    monkeypatch.setattr(
+        highlight_svc.llm, "complete_structured",
+        lambda *a, **k: {
+            "segments": [{"start": 0.0, "end": 120.0, "label": "other", "confidence": 0.95}],
+            "scene_type": "training",
+            "reasoning": "静态练习",
+        },
+    )
+    hl = highlight_svc.find_highlights(
+        tmp_path / "x.mp4", load_config(), duration_seconds=120.0, level="all",
+    )
+    assert hl.all_highlights is True
+    total = sum(s.end - s.start for s in hl.segments)
+    assert total >= 115, f"all 档兜底应切满全程，实际总时长 {total}"
+    assert hl.segments[-1].end >= 115
+
+
 def test_find_highlights_match_keeps_model_segments(tmp_path, monkeypatch):
     """比赛类视频保留模型高光筛选结果，不强制均匀切片。"""
     from app.services import highlight as highlight_svc
