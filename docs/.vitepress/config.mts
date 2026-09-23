@@ -8,6 +8,9 @@ export default defineConfig({
   // 文档内存在指向仓库根文件（AGENTS.md / README.md / .codebuddy skill）及规划中
   // 目录（references/、guides/）的跨引用，这些并非 VitePress 页面，故忽略 dead link 检查。
   ignoreDeadLinks: true,
+  // 参考代码目录（.gitignore 不入库）不参与文档站构建：内含外部项目 Markdown，
+  // 其 HTML 片段会被当作 Vue 模板解析而中断构建（如 TennisDiary README 未闭合标签）。
+  srcExclude: ['reference/**'],
   // 允许从任意主机（LAN / 容器 / 反代域名）访问 dev/preview 服务器。
   // VitePress 以 docs/ 为 Vite 根目录，不会自动读取仓库根的 vite.config.js，故在此显式声明。
   vite: {
@@ -50,7 +53,13 @@ export default defineConfig({
         { text: 'API 参考', link: '/references/' },
       ],
       '/guides/': [
-        { text: '使用指南', link: '/guides/' },
+        {
+          text: '使用指南',
+          items: [
+            { text: '指南索引', link: '/guides/' },
+            { text: '01：CV 增强工作流使用说明', link: '/guides/01-CV增强工作流使用说明' },
+          ],
+        },
       ],
     },
   },
