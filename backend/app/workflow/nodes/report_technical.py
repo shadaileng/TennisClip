@@ -29,6 +29,9 @@ from app.workflow.spec import (
             ParamSpec(key="level", label="分析层级", type="select", default="intermediate",
                       options=["beginner", "intermediate", "professional"],
                       description="报告分析深度"),
+            ParamSpec(key="knowledge_level", label="知识库档位", type="select", default="standard",
+                      options=["basic", "standard", "expert"],
+                      description="教学知识库深度：basic=要点 / standard=+规则 / expert=全量"),
         ],
         stage="reporting",
         optional=True,  # 失败不致命，保留集锦
@@ -51,11 +54,13 @@ def run(ctx, params):
 
     config = ctx.config
     level = params["level"]
+    knowledge_level = params.get("knowledge_level") or "standard"
     task_out = ctx.task_out
     report_file = task_out / "report.json"
 
     tech_report = report.generate_report(
-        video, highlight, config, level=level, out_path=report_file
+        video, highlight, config, level=level, out_path=report_file,
+        knowledge_level=knowledge_level,
     )
 
     # 落库：输出 - 报告文件

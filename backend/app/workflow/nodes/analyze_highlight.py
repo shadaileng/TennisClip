@@ -34,6 +34,9 @@ from app.workflow.spec import (
             ParamSpec(key="model", label="模型", type="select", default="",
                       options=[],
                       description="选择 LLM 模型（空=使用默认配置）"),
+            ParamSpec(key="prompt_variant", label="Prompt 变体", type="select", default="standard",
+                      options=["standard", "strict", "teaching"],
+                      description="识别口径：standard=标准 / strict=宁缺毋滥 / teaching=保留教学素材"),
         ],
         stage="highlighting",
         expensive=True,
@@ -54,10 +57,11 @@ def run(ctx, params):
     level = params["level"]
     analysis_mode = params["analysis_mode"]
     model = params.get("model") or None
+    prompt_variant = params.get("prompt_variant") or "standard"
 
     hl = highlight_service.find_highlights(
         video, config, float(duration), level=level, analysis_mode=analysis_mode, model=model,
-        candidates=candidates,
+        candidates=candidates, prompt_variant=prompt_variant,
     )
 
     return {"highlight": hl}

@@ -136,11 +136,13 @@ def test_analyze_highlight透传_params(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_highlights(video, config, duration, level="intermediate", analysis_mode=None, model=None, candidates=None):
+    def fake_highlights(video, config, duration, level="intermediate", analysis_mode=None,
+                        model=None, candidates=None, prompt_variant="standard"):
         captured["level"] = level
         captured["analysis_mode"] = analysis_mode
         captured["model"] = model
         captured["candidates"] = candidates
+        captured["prompt_variant"] = prompt_variant
         return HighlightResult(segments=[], scene_type="training")
 
     from app.services import highlight as hl_svc
@@ -156,6 +158,7 @@ def test_analyze_highlight透传_params(tmp_path, monkeypatch):
 
     assert captured["level"] == "professional"
     assert captured["analysis_mode"] == "video"
+    assert captured["prompt_variant"] == "standard"  # 缺省参数回落 standard
     assert result["highlight"].scene_type == "training"
 
 
@@ -257,8 +260,10 @@ def test_report_technical透传_level(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_report(video, highlight, config, level="intermediate", out_path=None):
+    def fake_report(video, highlight, config, level="intermediate", out_path=None,
+                    knowledge_level="standard"):
         captured["level"] = level
+        captured["knowledge_level"] = knowledge_level
         return TechnicalReport(level=level, summary="test")
 
     from app.services import report as report_svc
@@ -277,6 +282,7 @@ def test_report_technical透传_level(tmp_path, monkeypatch):
     result = report_technical.run(ctx, {"level": "professional"})
 
     assert captured["level"] == "professional"
+    assert captured["knowledge_level"] == "standard"  # 缺省参数回落 standard
     assert result["report"].level == "professional"
 
 

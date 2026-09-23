@@ -3,12 +3,16 @@
 设计原则（需求文档 2.3）：
 - 固定执行逻辑 + 强制 JSON 结构化输出；
 - 按用户层级（beginner/intermediate/professional）差异化分析口径；
-- 复杂场景（高速击球/遮挡/暗光）判别规则显式写入 Prompt（风险1 规避）。
+- 复杂场景（高速击球/遮挡/暗光）判别规则显式写入 Prompt（风险1 规避）；
+- 视觉判别规则 + few-shot 示例 + prompt_variant 变体（方案 12 · 阶段 1 Step 1.3）；
+- 报告注入分层教学知识库与网球领域知识（Step 1.1/1.2/1.5）。
 """
 
 from __future__ import annotations
 
 from app.models import HighlightResult
+from prompts.report_templates import knowledge_for
+from prompts.tennis_domain import domain_knowledge, label_reference
 
 _COMPLEX_SCENE_RULES = """
 复杂场景判别规则：
@@ -16,6 +20,44 @@ _COMPLEX_SCENE_RULES = """
 - 遮挡画面：结合前后 0.5s 帧的球路轨迹插值判断；
 - 暗光画面：降低该片段置信度上限至 0.8，并在 reasoning 中说明。
 """
+
+_VISUAL_DISCRIMINATION_RULES = """
+视觉判别规则（按画面特征识别，勿依赖音频）：
+- 发球 vs 正手：发球 = 底线后抛球 + 过顶击球 + 身体向上蹬伸；正手 = 侧身引拍 + 转体挥拍，击球点在腰部高度；
+- 双手反拍 vs 单手反拍：双手反拍引拍时非持拍手扶拍颈随转，击球瞬间双手不分离；单手反拍引拍时拍头竖起、随挥向斜上方延展；
+- 截击 vs 落地球：截击发生在网前且球未落地（无完整引拍、动作短促）；落地球均有引拍-挥拍完整弧线；
+- 高压扣杀 vs 发球：高压 = 侧身后退 + 向前上方扣压（来球来自对方挑高）；发球 = 静止抛球起手；
+- 回合 vs 死时间：只要画面中"球在双方场区上空连续往返"即为回合（含落地弹起）；捡球、走位、擦汗、整理线床、与教练交谈为死时间；
+- 制胜分 vs 对手失误：制胜分 = 击球后对手未触及（或触及未过网）；对手失误 = 对手击球下网/出界，两者都可入高光但 reasoning 中注明成因；
+- 标签归属以"主导动作"为准：发球+接发构成的短回合标 serve/ace（以发球质量定），相持 4 拍以上标 rally。
+"""
+
+_FEW_SHOT_EXAMPLES = """
+few-shot 示例（仅示范判断口径，时间戳须按实际视频重新推断）：
+- 例1（ACE）：画面为一方底线抛球过顶击球，球飞向对方发球区，接发方挥拍未触及 → label=ace，confidence 0.9+，段起点取抛球前 0.5s，终点取接发动作结束；
+- 例2（多拍相持）：连续 5 拍对拉后一方制胜 → 整段标 rally（勿拆成单拍），起点取该分准备姿态（分腿垫步/引拍），终点取最后一拍拍头随挥结束；
+- 例3（死时间剔除）：球员弯腰捡球 → 走回底线 → 整理拍线 → 等待发球 → 发球开始：仅"发球开始"之后入段，前三段死时间一律剔除；
+- 例4（训练场景）：教练喂球 + 学员连续正手击球，无对手回球 → 若整段无对抗回合，scene_type=training 且各段仅保留挥拍完整、动作清晰的击球片段。
+"""
+
+# prompt_variant 变体（Step 1.4）：standard=默认；strict=宁缺毋滥；teaching=保留教学素材
+_PROMPT_VARIANT_RULES = {
+    "standard": "",
+    "strict": """
+严格模式（strict）补充约束：
+- confidence < 0.6 的候选一律不返回；宁可少返回，也不返回把握不足的段；
+- 每段必须包含至少一次完整挥拍/击球；仅"看起来像动作"的模糊片段剔除；
+- 段边界收紧：起点不得早于准备动作开始，终点不得晚于随挥结束（±0.5s 内）；
+- reasoning 中须给出该段的视觉依据（如"抛球+蹬伸+过顶击球"）。
+""",
+    "teaching": """
+教学模式（teaching）补充约束：
+- 优先保留"技术动作完整可分析"的回合（含准备-引拍-击球-随挥全过程），供后续技术报告使用；
+- 对典型错误动作（如引拍过大、击球点靠后）同样保留，它们是教学分析的关键素材；
+- 每段尽量覆盖从准备姿态到随挥结束的完整链路，勿在动作中途截断；
+- 段数上限放宽：可多保留 1-2 个动作清晰的回合，宁多勿漏。
+""",
+}
 
 _LEVEL_PROFILES = {
     "beginner": "面向入门学员：术语通俗化，建议以基础动作纠正为主，避免高级训练术语。",
@@ -57,6 +99,7 @@ def build_highlight_prompt(
     candidates: list | None = None,
     select_all: bool = False,
     mode: str = "frame",
+    prompt_variant: str = "standard",
 ) -> str:
     """高光识别 + 双任务并行 Prompt。
 
@@ -66,6 +109,8 @@ def build_highlight_prompt(
     不做数量取舍（与 level 策略的 all 档位对应）。
     mode: 媒体输入策略（frame=抽帧 / video=视频理解）。video 模式弱化 ±2s 精修、
     改为"直接观看整段视频独立定位"，候选仅作参考提示。
+    prompt_variant: Prompt 变体（standard/strict/teaching），注入差异化补充约束；
+    非法值回落 standard（与 ParamSpec options 校验互补）。
     """
     profile = _LEVEL_PROFILES.get(level, _LEVEL_PROFILES["intermediate"])
     dur_note = f"\n视频总时长约 {duration_seconds:.1f} 秒。" if duration_seconds else ""
@@ -96,11 +141,14 @@ def build_highlight_prompt(
                 "并在对应窗口 ±2s 内精修起止时间戳；与候选窗口无关的片段请勿返回。"
             )
     prep = _PREP_EXCLUSION_VIDEO if mode == "video" else _PREP_EXCLUSION
+    variant_rules = _PROMPT_VARIANT_RULES.get(prompt_variant, _PROMPT_VARIANT_RULES["standard"])
     return f"""你是网球视频分析 Agent。请观看视频，完成以下任务：
 
 任务1（高光识别）：筛选真实击球与相持回合（ACE、发球、正手/反手抽击、截击、高压扣杀、多拍相持），输出起止时间戳。
 把视频按"连续击球—死时间—连续击球"的节奏切成若干段：每段是一次连续击球 / 相持片段（保持内部完整、含约 1s 前后缓冲），段间的死时间（捡球 / 走位 / 等待 / 休息 / 孤立失误）剔除不返回。不要返回覆盖整段的单一长段，也不要切碎连续击球。
-{dur_note}{cand_note}{prep}{_COMPLEX_SCENE_RULES}
+{dur_note}{cand_note}{prep}{_COMPLEX_SCENE_RULES}{_VISUAL_DISCRIMINATION_RULES}
+{label_reference()}
+{_FEW_SHOT_EXAMPLES}{variant_rules}
 任务2（动作初分析）：同步观察正反手击球、发球、截击、移动步伐与发力姿态。
 {profile}
 
@@ -113,8 +161,16 @@ def build_highlight_prompt(
 """
 
 
-def build_report_prompt(level: str = "intermediate", highlight: HighlightResult | None = None) -> str:
-    """技术分析报告 Prompt（基于高光结果深挖）。"""
+def build_report_prompt(
+    level: str = "intermediate",
+    highlight: HighlightResult | None = None,
+    knowledge_level: str = "standard",
+) -> str:
+    """技术分析报告 Prompt（基于高光结果深挖）。
+
+    knowledge_level: 教学知识库深度档（basic/standard/expert），控制注入的
+    教学要点条数（Step 1.1）与网球领域知识章节数（Step 1.2）；非法值回落 standard。
+    """
     profile = _LEVEL_PROFILES.get(level, _LEVEL_PROFILES["intermediate"])
     seg_note = ""
     if highlight and highlight.segments:
@@ -123,8 +179,15 @@ def build_report_prompt(level: str = "intermediate", highlight: HighlightResult 
             + "; ".join(f"[{s.start:.1f}-{s.end:.1f}] {s.label}" for s in highlight.segments)
             + "。请围绕这些回合深入分析。"
         )
+    knowledge_items = knowledge_for(level, knowledge_level)
+    knowledge_note = "教学要点库（按 knowledge_level 档位注入，诊断与建议须优先引用）：\n" + "\n".join(
+        f"- {item}" for item in knowledge_items
+    )
+    domain_note = "网球规则与生物力学知识：\n" + domain_knowledge(knowledge_level)
     return f"""你是网球技术教练 Agent。{profile}
 {seg_note}
+{knowledge_note}
+{domain_note}
 请基于视频与高光回合，输出结构化技术分析报告。重点覆盖：动作问题诊断、错误成因、针对性训练改进方案。
 
 输出要求：仅输出 JSON，不要输出任何其他文字。JSON 结构：

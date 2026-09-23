@@ -4,6 +4,17 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.14.0] - 2026-09-23
+
+### Added
+
+- 阶段 1 Prompt 增强（方案 12 · Step 1）：`report_templates` 教学知识库 3 条/级 → 21 条/级，分 basic/standard/expert 档累积注入（`knowledge_for`）
+- 新增 `prompts/tennis_domain.py` 网球规则/生物力学领域知识模块：`RULES` + `BIOMECHANICS` 六章按档位缩放，`label_reference` 提供高光标签判分判据
+- `build_highlight_prompt` 增强：视觉判别规则（7 类画面特征区分）+ few-shot 示例 4 则 + 标签判据注入；新增 `prompt_variant` 变体参数（standard/strict/teaching，非法值回落 standard）
+- `analyze.highlight` 节点新增 `prompt_variant` ParamSpec 并透传至 `find_highlights`；`report.technical` 节点新增 `knowledge_level` ParamSpec 并透传至 `generate_report`
+- `build_report_prompt` 按 `knowledge_level` 注入教学要点库与领域知识，报告诊断优先引用注入内容
+- 新增 `tests/test_prompt_knowledge.py` 10 个用例（知识库分档/领域模块/变体/参数校验/schema/透传），全量 221 测试通过
+
 ## [0.13.0] - 2026-09-23
 
 ### Added

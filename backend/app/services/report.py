@@ -21,14 +21,17 @@ def generate_report(
     config: AppConfig,
     level: str = "intermediate",
     out_path: Optional[Path] = None,
+    knowledge_level: str = "standard",
 ) -> TechnicalReport:
     """生成结构化技术分析报告；LLM 失败时使用模板兜底。
 
     out_path 指定落盘路径（由调用方 core.run_pipeline 决定文件名，
     保证与 TaskResult.report_path 记录一致）；缺省时按 video_path.stem 生成。
+    knowledge_level: 教学知识库深度档（basic/standard/expert），透传至
+    build_report_prompt 控制知识注入量（方案 12 · 阶段 1 Step 1.5）。
     """
-    logger.info("report: start level={}", level)
-    prompt = build_report_prompt(level=level, highlight=highlight)
+    logger.info("report: start level={} knowledge_level={}", level, knowledge_level)
+    prompt = build_report_prompt(level=level, highlight=highlight, knowledge_level=knowledge_level)
 
     result = llm.complete_structured(
         video_path=video_path,

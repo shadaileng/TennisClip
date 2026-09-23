@@ -49,6 +49,7 @@ def find_highlights(
     analysis_mode: Optional[str] = None,
     model: Optional[str] = None,
     candidates: Optional[list] = _NO_CANDIDATES,
+    prompt_variant: str = "standard",
 ) -> HighlightResult:
     """识别高光回合，返回结构化时间戳。
 
@@ -63,6 +64,8 @@ def find_highlights(
     level 驱动高光选择策略（config.highlight.resolve_selection）：beginner/intermediate/
     professional 各对应不同 max_segments 上限；all（所有高光回合）遍历整段、不截断候选与
     段数、置 all_highlights 标记，下游剪辑/报告据此全量拼接与分析。
+    prompt_variant: Prompt 变体（standard/strict/teaching），透传至 build_highlight_prompt
+    注入差异化约束（方案 12 · 阶段 1 Step 1.4）。
     """
     logger.info("highlight: start for {} (level={})", video_path.name, level)
     sel = config.highlight.resolve_selection(level)
@@ -98,7 +101,7 @@ def find_highlights(
     prompt_cands = _final_cands
     prompt = build_highlight_prompt(
         level=level, duration_seconds=duration_seconds, candidates=prompt_cands,
-        select_all=all_highlights, mode=mode,
+        select_all=all_highlights, mode=mode, prompt_variant=prompt_variant,
     )
 
     result = llm.complete_structured(
