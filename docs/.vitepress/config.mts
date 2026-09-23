@@ -39,6 +39,7 @@ export default defineConfig({
             { text: '09：可编排工作流方案', link: '/plans/09-可编排工作流方案' },
             { text: '10：任务列表与历史记录界面', link: '/plans/10-任务列表与历史记录界面' },
             { text: '11：工作流模式整合主界面', link: '/plans/11-工作流模式整合主界面' },
+            { text: '12：本地大模型部署可行性方案', link: '/plans/12-本地大模型部署可行性方案' },
           ],
         },
       ],
