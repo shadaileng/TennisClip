@@ -8,7 +8,11 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
+
+import pytest
 
 from app.config import load_config
 from app.models import Segment
@@ -71,6 +75,11 @@ def test_video_strategy_oversize_only_warns(monkeypatch):
         def __init__(self, size):
             self._size = size
 
+        @property
+        def stem(self):
+            # 生产代码 _transcode_for_upload 使用 Path.stem，假对象须与 Path API 对齐
+            return "big"
+
         def stat(self):
             class S:
                 pass
@@ -91,3 +100,27 @@ def test_video_strategy_oversize_only_warns(monkeypatch):
     # 仅告警，仍返回 video_url 块（不切片）
     assert any("超过" in str(c) for c in calls)
     assert parts[0]["type"] == "video_url"
+
+
+def test_transcode_for_upload_explicit_mp4_container(tmp_path):
+    """批次 C sidecar 回归：`.part` 无容器扩展名 → 须显式 `-f mp4`，真 ffmpeg 转码成功不回退。"""
+    from app.utils import ffmpeg
+
+    if not ffmpeg.is_available():
+        pytest.skip("ffmpeg 不可用")
+
+    src = tmp_path / f"transcode_sidecar_{os.getpid()}.mp4"
+    ffmpeg.run([
+        "ffmpeg", "-y", "-f", "lavfi", "-i",
+        "testsrc=duration=0.5:size=64x48:rate=10",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src),
+    ])
+
+    out = ms._transcode_for_upload(src)
+
+    # 成功 → 返回共享缓存 upload_{stem}.mp4（与「回退原始文件」可区分）
+    assert out != src
+    assert out.name == f"upload_{src.stem}.mp4"
+    assert out.exists() and out.stat().st_size > 0
+    # sidecar 已清理（finally unlink）
+    assert list(Path(tempfile.gettempdir()).glob(f"upload_{src.stem}.*.part")) == []

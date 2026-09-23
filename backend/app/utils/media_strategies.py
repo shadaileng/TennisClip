@@ -140,6 +140,8 @@ def _transcode_for_upload(video_path: Path, max_height: int = 480, crf: int = 28
     视频——先写进程/线程级唯一的 sidecar 临时文件，成功后 os.replace 原子替换到
     共享缓存路径。读者只会读到某个完整文件（POSIX rename 原子），Windows 下目标被
     占用时 os.replace 抛错走回退分支返回原始文件，不会读到写了一半的内容。
+    sidecar 以 `.part` 结尾（无容器扩展名），ffmpeg 无法从扩展名推断输出容器，
+    须显式 `-f mp4`（否则 exit=234 必走回退、480p 降采样白做）。
     """
     from app.utils import ffmpeg
     if not ffmpeg.is_available():
@@ -158,6 +160,7 @@ def _transcode_for_upload(video_path: Path, max_height: int = 480, crf: int = 28
             "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
             "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             "-c:a", "aac", "-b:a", "48k",
+            "-f", "mp4",  # sidecar 无容器扩展名（.part），显式指定容器
             str(staging),
         ])
         if staging.exists() and staging.stat().st_size > 0:

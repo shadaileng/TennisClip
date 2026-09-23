@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.16.1] - 2026-09-23
+
+### Fixed
+
+- 批次 C sidecar 改名两处回归（实机运行日志发现）：① `_transcode_for_upload` staging 文件 `.part` 无容器扩展名致 ffmpeg 推断失败（exit=234）、视频理解上传转码必回退原始文件（480p 降采样失效）→ 显式 `-f mp4` 指定容器；② `test_video_strategy_oversize_only_warns` 的 `FakePath` 缺 `Path.stem`（生产改用 `.stem` 后必报错，此前以 deselect 掩盖）→ 假对象补 `stem` 属性并恢复全量运行；新增真 ffmpeg sidecar 转码回归用例，**275 测试全绿（0 排除）**
+
 ## [0.16.0] - 2026-09-23
 
 ### Added
