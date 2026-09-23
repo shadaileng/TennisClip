@@ -286,3 +286,109 @@ class TestTC43SeedDefaultWorkflow:
             wfs = workflow_service.list_workflows(s)
             builtins = [w for w in wfs if w.is_builtin and w.name == "默认工作流"]
             assert len(builtins) == 1
+
+
+# ──────────── 5.2: 内置预设种子 ────────────
+class TestSeedBuiltinPresets:
+    """方案 12 · 5.2：CV 增强内置预设种子（按名幂等）+ seed_builtin_presets 包装。"""
+
+    def test_seed_cv_creates_builtin_with_valid_graph(self, tmp_path, monkeypatch):
+        """种子创建 is_builtin 的「CV 增强工作流」，图通过 R1~R10 校验。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.workflow.graph import WorkflowGraph
+
+        with SessionLocal() as s:
+            workflow_service.seed_cv_workflow(s)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            cv = [w for w in wfs if w.name == "CV 增强工作流"]
+            assert len(cv) == 1
+            assert cv[0].is_builtin == 1
+            graph = json.loads(cv[0].graph_json)
+            res = WorkflowGraph.from_dict(graph).validate()
+            assert res["ok"], res.get("errors")
+
+    def test_seed_cv_idempotent_by_name(self, tmp_path, monkeypatch):
+        """按名幂等：已有其他工作流（count>0）时重复种子不产生重复行。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+
+        # 先造一条用户工作流（全表 count>0，隔离默认种子的 count==0 门控）
+        with SessionLocal() as s:
+            workflow_service.create_workflow(s, "用户工作流", _make_default_graph_dict())
+            s.commit()
+
+        with SessionLocal() as s:
+            workflow_service.seed_cv_workflow(s)
+            s.commit()
+        with SessionLocal() as s:
+            workflow_service.seed_cv_workflow(s)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            assert len([w for w in wfs if w.name == "CV 增强工作流"]) == 1
+
+    def test_seed_builtin_presets_seeds_both_idempotent(self, tmp_path, monkeypatch):
+        """seed_builtin_presets：空库同时种子默认与 CV 两个内置预设，重复调用幂等。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.config import load_config
+
+        cfg = load_config()
+
+        with SessionLocal() as s:
+            workflow_service.seed_builtin_presets(s, cfg)
+            s.commit()
+        with SessionLocal() as s:
+            workflow_service.seed_builtin_presets(s, cfg)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            assert len([w for w in wfs if w.name == "默认工作流"]) == 1
+            assert len([w for w in wfs if w.name == "CV 增强工作流"]) == 1
+
+    def test_seed_presets_respects_existing_rows(self, tmp_path, monkeypatch):
+        """已有数据时不补默认工作流（count==0 门控不变），CV 按名缺则补。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.config import load_config
+
+        cfg = load_config()
+
+        with SessionLocal() as s:
+            workflow_service.create_workflow(s, "用户工作流", _make_default_graph_dict())
+            s.commit()
+
+        with SessionLocal() as s:
+            workflow_service.seed_builtin_presets(s, cfg)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            assert len([w for w in wfs if w.name == "默认工作流"]) == 0
+            assert len([w for w in wfs if w.name == "CV 增强工作流"]) == 1
+
+    def test_cv_preset_is_builtin_protected(self, tmp_path, monkeypatch):
+        """内置保护：CV 预设更新/删除均抛 WorkflowBuiltinProtected。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.services.workflow_service import WorkflowBuiltinProtected
+
+        with SessionLocal() as s:
+            workflow_service.seed_cv_workflow(s)
+            s.commit()
+        with SessionLocal() as s:
+            cv = [w for w in workflow_service.list_workflows(s)
+                  if w.name == "CV 增强工作流"][0]
+            cv_id = cv.id
+
+        with SessionLocal() as s:
+            with pytest.raises(WorkflowBuiltinProtected):
+                workflow_service.update_workflow(s, cv_id, name="改名")
+            with pytest.raises(WorkflowBuiltinProtected):
+                workflow_service.delete_workflow(s, cv_id)

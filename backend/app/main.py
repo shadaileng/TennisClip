@@ -61,6 +61,16 @@ _VALID_LEVELS = {"beginner", "intermediate", "professional", "all"}
 # 初始化数据库（多兼容：SQLite/Postgres/MySQL，按 config.database.url）
 db_service.init_db(config)
 
+# 内置工作流预设种子（幂等：默认按全表 count==0、CV 增强按名缺则补；失败仅告警不阻断）
+try:
+    from app.services import workflow_service as _wf_service
+
+    with db_service.session() as _s:
+        _wf_service.seed_builtin_presets(_s, config)
+        _s.commit()
+except Exception as _seed_exc:  # noqa: BLE001 — 种子失败不影响服务启动
+    logger.warning("内置工作流预设种子失败（不阻断启动）: {}", _seed_exc)
+
 # 启动环境自检（FFMPEG / 数据库 / 模型提供商 / 数据目录）
 # 任一检查不通过仅告警、不阻断启动；结果挂载到 app.state 供 /health 暴露
 from app.utils.environment import run_startup_checks

@@ -4,6 +4,13 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.16.0] - 2026-09-23
+
+### Added
+
+- 新增「CV 增强工作流」内置预设种子（方案 12 · 5.2）：`workflow_service.seed_cv_workflow`（按名幂等、`is_builtin=1`、`sort_order=1`）+ `seed_builtin_presets` 包装（默认按全表 count==0、CV 按名缺则补），`main.py` 启动接线（try/except 仅告警不阻断）
+- 预置图为示例 C 降本链路：input → preprocess → detect.tracknet → post.score_highlights → edit.concat ∥ report.technical → output.artifact（无 analyze.highlight，LLM 仅出报告）；`tests/test_workflow_repo.py` 新增 5 例（R1~R10 校验/按名幂等/双种子幂等/存量库门控/内置保护），全量 273 通过
+
 ## [0.15.1] - 2026-09-23
 
 ### Added

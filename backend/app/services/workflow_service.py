@@ -1,7 +1,7 @@
 """工作流持久化服务：CRUD、激活、种子。
 
 - create_workflow / get_workflow / list_workflows / update_workflow / delete_workflow
-- activate_workflow / seed_default_workflow
+- activate_workflow / seed_default_workflow / seed_cv_workflow / seed_builtin_presets
 - WorkflowConflict / WorkflowBuiltinProtected 异常
 """
 
@@ -157,3 +157,79 @@ def seed_default_workflow(db: Session, config) -> None:
     db.add(wf)
     db.flush()
     logger.info("workflow: seeded default builtin id={}", wf.id)
+
+
+def _cv_enhanced_graph_dict() -> dict:
+    """「CV 增强工作流」内置预置图（方案 12 · 5.2，示例 C 降本链路）。
+
+    input → preprocess → detect.tracknet → post.score_highlights
+        ├→ edit.concat ────────┐
+        └→ report.technical ───┴→ output.artifact
+
+    信号候选定位（TrackNet 球追踪）与高光初筛（CLIP 零样本评分）由 CV 层承担，
+    LLM 仅保留报告生成（analyze.highlight 不入图，这是「降本」语义的来源）。
+    detect.* 为 on_failure=skip 级联锚点：缺 CV 依赖/权重时跳过、任务不失败。
+    """
+    return {
+        "version": 1,
+        "name": "CV 增强工作流",
+        "nodes": [
+            {"id": "n1", "type": "input.video", "params": {}, "enabled": True},
+            {"id": "n2", "type": "preprocess.transcode", "params": {}, "enabled": True},
+            {"id": "n3", "type": "detect.tracknet", "params": {}, "enabled": True},
+            {"id": "n4", "type": "post.score_highlights", "params": {}, "enabled": True},
+            {"id": "n5", "type": "edit.concat", "params": {}, "enabled": True},
+            {"id": "n6", "type": "report.technical", "params": {}, "enabled": True},
+            {"id": "n7", "type": "output.artifact", "params": {}, "enabled": True},
+        ],
+        "edges": [
+            {"id": "e1", "from": ["n1", "video"], "to": ["n2", "video"]},
+            {"id": "e2", "from": ["n2", "video"], "to": ["n3", "video"]},
+            {"id": "e3", "from": ["n2", "duration"], "to": ["n3", "duration"]},
+            {"id": "e4", "from": ["n3", "candidates"], "to": ["n4", "candidates"]},
+            {"id": "e5", "from": ["n2", "video"], "to": ["n4", "video"]},
+            {"id": "e6", "from": ["n4", "highlight"], "to": ["n5", "highlight"]},
+            {"id": "e7", "from": ["n2", "video"], "to": ["n5", "video"]},
+            {"id": "e8", "from": ["n4", "highlight"], "to": ["n6", "highlight"]},
+            {"id": "e9", "from": ["n2", "video"], "to": ["n6", "video"]},
+            {"id": "e10", "from": ["n5", "video"], "to": ["n7", "video"]},
+            {"id": "e11", "from": ["n5", "highlight"], "to": ["n7", "highlight"]},
+            {"id": "e12", "from": ["n6", "report"], "to": ["n7", "report"]},
+        ],
+    }
+
+
+def seed_cv_workflow(db: Session) -> None:
+    """「CV 增强工作流」内置预设种子（方案 12 · 5.2，按名幂等）。
+
+    与 seed_default_workflow 不同：不设全表 count 门控——只要名称不存在即补种，
+    兼容存量库已有用户数据的场景。
+    """
+    name = "CV 增强工作流"
+    if db.query(Workflows).filter_by(name=name).first():
+        return
+
+    wf = Workflows(
+        name=name,
+        description="方案 12 示例 C 降本链路：TrackNet 球追踪候选 + CLIP 零样本初筛产出高光，"
+                    "LLM 仅出报告；需 CV 依赖组与权重（uv sync --extra cv，缺依赖时 CV 层级联跳过）",
+        graph_json=json.dumps(_cv_enhanced_graph_dict(), ensure_ascii=False),
+        is_builtin=1,
+        enabled=1,
+        sort_order=1,
+    )
+    db.add(wf)
+    db.flush()
+    logger.info("workflow: seeded CV builtin id={}", wf.id)
+
+
+def seed_builtin_presets(db: Session, config) -> None:
+    """启动期内置预设种子（幂等）：默认工作流 + CV 增强工作流。
+
+    - 默认工作流：全表 count==0（首次启动）才生成，语义不变；
+    - CV 增强工作流：按名缺则补（存量库也生效）。
+
+    由 main.py 启动时调用（try/except 包裹，失败仅告警不阻断）。
+    """
+    seed_default_workflow(db, config)
+    seed_cv_workflow(db)
