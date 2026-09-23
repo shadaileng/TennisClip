@@ -27,8 +27,8 @@ TennisClip/
 │   │   │   ├── graph.py      # 图结构：节点 + 边 + 校验（R1~R10）+ Kahn 拓扑排序
 │   │   │   ├── executor.py   # 执行器：Context 传值 + stage 上报 + 产物投影
 │   │   │   ├── presets.py    # 预置编译器：compile_from_legacy / compile_from_config
-│   │   │   └── nodes/        # 9 个内置节点（input.video / preprocess.transcode / ...）
-│   │   └── utils/            # ffmpeg / llm / tasks / logger / media_strategies（视频理解策略）
+│   │   │   └── nodes/        # 15 个内置节点（input.video / preprocess.transcode / ...）
+│   │   └── utils/            # ffmpeg / llm / tasks / logger / media_strategies（视频理解策略）/ cv_*（CV 感知层薄封装）
 │   ├── alembic/              # 数据库迁移（env.py + versions/*.py，迁移脚本入库）
 │   ├── alembic.ini           # Alembic 配置（连接串由 env.py 动态解析，不写死）
 │   ├── prompts/              # 领域 Prompt 模板（网球教学知识库注入点）
@@ -133,7 +133,8 @@ TennisClip/
   - **图结构**（`graph.py`）：`WorkflowGraph` 含节点列表 + 有向边 + 校验（R1~R10 十项规则）+ Kahn 拓扑排序；`frozen` 属性锁定预置图。
   - **执行器**（`executor.py`）：`Context` 传值 + stage 上报 + 产物投影（`output.artifact` 节点写回 `TaskResult`）。
   - **预置编译器**（`presets.py`）：`compile_from_legacy(stages, strategy, level)` 将旧管线三元组编译为 `WorkflowGraph`；`compile_from_config(db, config)` 读取配置 KV 后委托编译。编译产出的图 `frozen=True`，禁止修改。
-  - **9 个内置节点**：`input.video`（视频输入）、`preprocess.transcode`（预处理转码）、`detect.candidates`（信号候选定位）、`analyze.highlight`（LLM 高光识别）、`post.filter_segments`（片段过滤）、`post.uniform_slices`（均匀切片兜底）、`edit.concat`（剪辑合成）、`report.technical`（技术分析报告）、`output.artifact`（产物投影）。
+  - **15 个内置节点**：`input.video`（视频输入）、`preprocess.transcode`（预处理转码）、`detect.candidates`（信号候选定位）、`analyze.highlight`（LLM 高光识别）、`post.filter_segments`（片段过滤）、`post.uniform_slices`（均匀切片兜底）、`edit.concat`（剪辑合成）、`report.technical`（技术分析报告）、`output.artifact`（产物投影），以及 CV 感知层 6 节点（方案 12 · Step 2）：`detect.tracknet`（TrackNet 球追踪，track+candidates 双输出）、`detect.court`（球场 14 关键点）、`detect.player`（YOLOv8 球员运动分数→候选）、`detect.pose`（MediaPipe 姿态）、`post.score_highlights`（CLIP 零样本评分，脱离 LLM 产出 highlight）、`post.classify_strokes`（击球分类 cnn/dtw，pose 输入可选）。
+  - **CV 感知层契约**：推理薄封装在 `app/utils/cv_*.py`（共享运行时 `cv_runtime.py`），候选聚合复用 `event_detect.track_to_candidates`/`scores_to_candidates`（与旧信号同一套聚类）；依赖/权重缺失抛 `CvUnavailable`，**4 个 detect 节点 `on_failure="skip"` 级联降级、2 个 post 节点保持 fail**；依赖组 `uv sync --extra cv`（torch/ultralytics/mediapipe/transformers），权重放 `backend/data/models/`（gitignore 忽略）；模块级导入零重依赖，无 CV 环境节点注册与 schema 照常工作。
   - **持久化**：`workflows` 表（name/graph_json/is_builtin/enabled），Alembic 迁移；`workflow_service.py` CRUD + 激活 + 种子。内置工作流（`is_builtin=1`）不可删除/修改。
   - **API**：`GET /api/v1/workflows/schema`（节点目录）、`GET/POST/PUT/DELETE /api/v1/workflows`（CRUD）、`POST /{id}/activate`、`POST /validate`（草稿校验不落库）。
   - **运行时取值优先级**：显式 `workflow_id` > 激活工作流 > 由三 KV 编译的默认图。
@@ -233,6 +234,7 @@ TennisClip/
 # 后端
 cd backend
 uv sync                      # 安装依赖
+uv sync --extra cv           # 可选：CV 感知层依赖（torch/ultralytics/mediapipe/transformers）
 uv run uvicorn app.main:app  # 启动 API（8000）
 uv run pytest tests/         # 运行单元测试
 uv run python -m app.cli data/sample_videos/serve.mp4   # 命令行处理单视频

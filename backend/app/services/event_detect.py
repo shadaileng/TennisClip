@@ -313,8 +313,21 @@ def detect_candidates(
     merged.sort(key=lambda c: c[2], reverse=True)
     # top_n=None 表示放开上限（保留全部合并候选）；正整数则按上限截断。
     top = merged if top_n is None else merged[: top_n]
+    segs = _windows_to_segments(top, duration, cfg)
+    logger.info(
+        "event_detect: {} 候选窗口（mode={} 来源={} → 合并后{}）",
+        len(segs), mode, source, len(merged),
+    )
+    return segs
+
+
+# ---------- CV 感知层候选聚合（方案 12 · Step 2：新旧检测信号共用同一套聚合） ----------
+
+
+def _windows_to_segments(windows, duration: float, cfg: HighlightConfig) -> List[Segment]:
+    """窗口三元组 (start, end, score) → 合法 Segment 列表（label=candidate）。"""
     segs: List[Segment] = []
-    for (s, e, _) in top:
+    for (s, e, _) in windows:
         s = max(0.0, min(s, duration))
         e = min(duration, max(e, s + cfg.min_segment_seconds))
         if e - s >= cfg.min_segment_seconds:
@@ -323,10 +336,62 @@ def detect_candidates(
                 label="candidate", confidence=0.9,
             ))
     segs.sort(key=lambda x: x.start)
-    logger.info(
-        "event_detect: {} 候选窗口（mode={} 来源={} → 合并后{}）",
-        len(segs), mode, source, len(merged),
-    )
+    return segs
+
+
+def track_to_candidates(
+    track: List[dict], duration: float, config: HighlightConfig, top_n: Optional[int] = None
+) -> List[Segment]:
+    """球轨迹点 → 候选窗口（detect.tracknet 节点用）。
+
+    track 元素为 ``{"t": 秒, "x": px, "y": py, "confidence": p}``；
+    复用 _cluster_hits 按 hit_cluster_gap_seconds 把相邻轨迹点聚为回合窗口
+    （球在场期间逐帧有值，间隔只出现在回合之间 → 天然按回合聚类）。
+    """
+    if not track or duration <= 0:
+        return []
+    hits = [float(p.get("t", -1.0)) for p in track]
+    hits = [t for t in hits if 0.0 <= t <= duration]
+    if not hits:
+        return []
+    clusters = _cluster_hits(hits, config, duration)  # (start, end, score=点数)
+    if not clusters:
+        return []
+    merged = _merge_windows(clusters)
+    merged.sort(key=lambda c: c[2], reverse=True)
+    top = merged if top_n is None else merged[:top_n]
+    segs = _windows_to_segments(top, duration, config)
+    logger.info("event_detect: 轨迹 {} 点 → {} 候选窗口", len(track), len(segs))
+    return segs
+
+
+def scores_to_candidates(
+    scores, step: float, duration: float, config: HighlightConfig,
+    percentile: float = 80.0, top_n: Optional[int] = None,
+) -> List[Segment]:
+    """逐帧运动分数 → 候选窗口（detect.player 节点用）。
+
+    scores 为逐采样帧运动分数（如 YOLO 球员中心位移总量），step 为采样步长（秒）。
+    阈值 = max(绝对下界 motion_threshold, 分位值)——与 compute_action_bursts 一致；
+    掩码→窗口复用 _windows_from_mask，窗口合并复用 _merge_windows。
+    """
+    if not scores or duration <= 0 or step <= 0:
+        return []
+    if np is None:
+        logger.warning("event_detect: numpy 缺失，scores_to_candidates 返回空候选")
+        return []
+    arr = np.asarray(scores, dtype=float)
+    if arr.size < 2:
+        return []
+    thr = max(config.motion_threshold, float(np.percentile(arr, percentile)))
+    windows = _windows_from_mask(arr >= thr, step, arr, config.min_segment_seconds)
+    if not windows:
+        return []
+    merged = _merge_windows(windows)
+    merged.sort(key=lambda c: c[2], reverse=True)
+    top = merged if top_n is None else merged[:top_n]
+    segs = _windows_to_segments(top, duration, config)
+    logger.info("event_detect: {} 帧分数 → {} 候选窗口", len(scores), len(segs))
     return segs
 
 

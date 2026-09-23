@@ -4,6 +4,16 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.15.0] - 2026-09-23
+
+### Added
+
+- CV 感知层 6 节点（方案 12 · Step 2）：`detect.tracknet` / `detect.court` / `detect.player` / `detect.pose` / `post.score_highlights` / `post.classify_strokes`，内置节点 9 → 15；4 个 detect 节点 `on_failure="skip"` 级联降级、2 个 post 节点保持 fail（方案 4.3.3/2.8 契约）
+- 新增 `app/utils/cv_*.py` 六个推理薄封装 + `cv_runtime.py` 共享运行时（依赖探测 `require`、权重解析 `resolve_weights`、TorchScript/整模加载、统一抽帧 `sample_frames`；依赖/权重缺失抛 `CvUnavailable`），模块级导入零重依赖、无 CV 环境节点注册与 schema 照常工作
+- `event_detect` 新增公共聚合 `track_to_candidates`（轨迹点→回合窗口，复用 `_cluster_hits`）与 `scores_to_candidates`（运动分数→窗口，复用 `_windows_from_mask`），新旧检测信号共用同一套候选聚合；原候选段转换提取为 `_windows_to_segments`
+- `pyproject.toml` 新增 `cv` 可选依赖组（`uv sync --extra cv`：torch / ultralytics / mediapipe / transformers / pillow / opencv）；权重约定 `backend/data/models/`（gitignore 忽略）
+- 新增 `tests/test_workflow_cv_nodes.py` 24 用例（schema 15 节点、端口与失败策略契约、参数边界、R4/R5/R8 图校验、节点传参与函数式传递、dtw 模板分类可测路径、示例 B 并联对比图校验、示例 C 图端到端、CvUnavailable skip 级联），全量 253 测试通过
+
 ## [0.14.1] - 2026-09-23
 
 ### Added

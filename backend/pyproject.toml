@@ -23,6 +23,16 @@ dev = [
     "pytest>=8.0",
     "opencv-python>=4.9",
 ]
+# CV 感知层（方案 12 · Step 2.10，按需安装）：uv sync --extra cv
+# 权重文件放 backend/data/models/（gitignore 忽略），缺失时 detect.* 节点级联跳过
+cv = [
+    "torch>=2.2",
+    "ultralytics>=8.2",
+    "mediapipe>=0.10.14",
+    "transformers>=4.40",
+    "pillow>=10.0",
+    "opencv-python>=4.9",
+]
 # 多数据库驱动（按需安装）：
 # postgresql: "psycopg[binary]>=3.1"
 # mysql:      "pymysql>=1.1"
