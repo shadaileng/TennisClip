@@ -696,6 +696,57 @@ def test_on_failure_skip_cascades_downstream(tmp_path, monkeypatch):
     assert statuses["n2"] == "done"
 
 
+def test_optional_dead_source_does_not_kill_artifact(tmp_path, monkeypatch):
+    """optional 上游（report）失败（仅标 skipped、不记死亡）→ 不级联 artifact：集锦/高光仍投影。
+
+    修复报告失败吞产物的级联过度：report（optional=True，契约「失败不致命，保留集锦」）失败
+    不记入死亡集合，artifact.video/highlight 来源存活时继续执行并投影既有产物（output.artifact
+    用真实实现做投影断言，不打桩）。
+    """
+    from app.workflow.executor import Executor
+    from app.workflow import spec as spec_mod
+    from app.models import HighlightResult, Segment
+
+    def fail_fn(ctx, params):
+        raise RuntimeError("模拟 LLM 报告失败")
+
+    def track_fn(name):
+        def fn(ctx, params):
+            if name == "input.video":
+                return {"video": ctx.video_path}
+            elif name == "preprocess.transcode":
+                return {"video": ctx.video_path, "duration": 60.0}
+            elif name == "detect.candidates":
+                return {"candidates": []}
+            elif name == "analyze.highlight":
+                return {"highlight": HighlightResult(segments=[Segment(start=1, end=5, label="ace", confidence=0.9)])}
+            elif name == "edit.concat":
+                out = ctx.task_out / "highlight.mp4"
+                out.write_bytes(b"dummy")
+                return {"video": out}
+            return {}
+        return fn
+
+    for nt in ["input.video", "preprocess.transcode", "detect.candidates",
+               "analyze.highlight", "edit.concat"]:
+        monkeypatch.setitem(spec_mod._FN_REGISTRY, nt, track_fn(nt))
+    monkeypatch.setitem(spec_mod._FN_REGISTRY, "report.technical", fail_fn)
+    # output.artifact 不打桩，用真实实现验证投影
+
+    g = _default_graph_dict()
+    graph = WorkflowGraph.from_dict(g)
+    result = _make_result("opt_dead_source")
+    executor = Executor(graph, AppConfig(), result)
+    executor.execute(tmp_path / "test.mp4")
+
+    assert result.status == "succeeded"
+    statuses = {n.node_id: n.status for n in result.workflow_nodes}
+    assert statuses["n6"] == "skipped"  # optional report 失败 → 自身 skipped（不记死亡）
+    assert statuses["n7"] == "done"     # 修复点：optional 失败不级联 artifact
+    assert result.highlight_video_path is not None  # 集锦投影保住
+    assert result.highlight is not None             # 高光投影保住
+
+
 def test_on_failure_fail_propagates_to_task_failed(tmp_path, monkeypatch):
     """on_failure=fail（默认）节点失败 → 任务 FAILED（向后兼容，与既有 TC-26 语义一致）。"""
     from app.workflow.executor import Executor

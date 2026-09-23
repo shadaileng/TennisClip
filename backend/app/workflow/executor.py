@@ -6,7 +6,8 @@
 - 批次 A1：每节点独立 config 深拷贝（节点内改写 config 不影响其他节点/全局，并行执行前置）
 - 批次 A2：节点内传值一律 model_copy（函数式，禁止原地改上游输出）
 - 批次 A3：运行时端口值类型校验（spec.validate_port_value，store/resolve 双向）
-- 批次 B1：on_failure="skip" 级联跳过（节点失败 → 本节点与下游 skipped，任务仍 SUCCEEDED）
+- 批次 B1：on_failure="skip" 级联跳过（节点失败 → 本节点与下游 skipped，任务仍 SUCCEEDED）；
+  optional=True 节点失败仅标 skipped、不记死亡（下游按无产出继续，保留既有产物投影）
 - 批次 B2：产物投影仅信任 output.artifact 显式连线，无兜底扫描
 - 批次 C1（同层并行）：准备（解析输入/级联判定/参数）与收尾（store/落库/状态）在主线程
   按层内 node.id 升序执行（日志与状态确定可复现）；同层节点按 spec.stage 分组——组间
@@ -213,6 +214,8 @@ class Executor:
                     # 级联跳过（批次 B1）：必填输入来自死亡/未产出节点 → 本节点 skipped。
                     # 判定：该输入值缺失（None 且未注册输出）且唯一来源在 dead_nodes 中。
                     # 来源正常执行但输出 None（如 report 节点 all 档位）不级联——由节点自身语义处理。
+                    # 死亡锚点见收尾阶段：on_failure=skip 与级联跳过的节点记入 dead_nodes；
+                    # optional=True 节点失败仅标 skipped 不记死亡（下游按无产出继续，保留既有产物）。
                     should_skip = False
                     skip_reason = ""
                     for port, value in inputs.items():
@@ -300,12 +303,21 @@ class Executor:
                         self._record_outputs(spec, payload, node_ctx)
                         self.result.workflow_nodes[idx].status = "done"
                     except Exception as exc:
-                        if spec.on_failure == "skip" or spec.optional:
+                        if spec.on_failure == "skip":
+                            # skip 策略 = 级联锚点：自身与下游标 skipped（AGENTS 契约）
                             self.result.workflow_nodes[idx].status = "skipped"
                             skipped.append(node_id)
                             dead_nodes.add(node_id)
                             logger.warning("workflow: 节点 {} 失败（on_failure={}），级联跳过：{}",
                                            node_id, spec.on_failure, exc)
+                            continue
+                        if spec.optional:
+                            # best-effort 失败：仅标 skipped、不记死亡——下游按「来源存活、
+                            # 无产出」继续执行（如 report 失败保留已生成的集锦/高光投影）
+                            self.result.workflow_nodes[idx].status = "skipped"
+                            skipped.append(node_id)
+                            logger.warning("workflow: 节点 {} 失败（optional），跳过且不级联：{}",
+                                           node_id, exc)
                             continue
                         self.result.workflow_nodes[idx].status = "failed"
                         if fatal is None:

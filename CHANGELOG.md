@@ -4,6 +4,16 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.15.1] - 2026-09-23
+
+### Added
+
+- 新增 `tests/test_workflow_graph.py::test_optional_dead_source_does_not_kill_artifact` 回归用例（report optional 失败场景下 artifact 真实投影断言），全量 268 测试通过
+
+### Fixed
+
+- 级联跳过死亡标记收口：`on_failure=skip` 节点保持级联锚点（自身与下游 skipped、任务仍成功），`optional=True` 节点失败仅标记 skipped、**不再记入死亡集合**——修复 report（契约「失败不致命，保留集锦」）失败时下游 `output.artifact` 被级联跳过、已生成的集锦/高光产物不投影的缺陷（方案 12 · 5.2 预置图设计时发现）
+
 ## [0.15.0] - 2026-09-23
 
 ### Added
