@@ -1,10 +1,12 @@
-"""技术分析报告节点：封装 report.generate_report。"""
+"""技术分析报告节点：封装 report.generate_report。
+
+批次 C2：产物落库改由执行器按 NodeSpec.persists=(("report","report"),) 统一执行
+（非路径端口值按约定查 task_out/report.json，文件不存在跳过）——节点保持纯函数。
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from app.services import db_service, report
+from app.services import report
 from app.workflow.spec import (
     NodeSpec,
     ParamSpec,
@@ -36,6 +38,7 @@ from app.workflow.spec import (
         stage="reporting",
         optional=True,  # 失败不致命，保留集锦
         expensive=True,
+        persists=(("report", "report"),),
     )
 )
 def run(ctx, params):
@@ -63,11 +66,6 @@ def run(ctx, params):
         knowledge_level=knowledge_level,
     )
 
-    # 落库：输出 - 报告文件
-    if report_file.exists():
-        db_service.record_task_output(
-            ctx.task_id, "report", str(report_file),
-            report_file.stat().st_size / (1024 * 1024),
-        )
-
+    # 批次 C2：产物落库由执行器按 persists=("report","report") 统一执行
+    #（非路径端口值按约定查 task_out/report.json，文件不存在跳过）
     return {"report": tech_report}

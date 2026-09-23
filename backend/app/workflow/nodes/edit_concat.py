@@ -1,8 +1,12 @@
-"""剪辑合成节点：封装 video_editor.edit_highlight_video。"""
+"""剪辑合成节点：封装 video_editor.edit_highlight_video。
+
+批次 C2：产物落库改由执行器按 NodeSpec.persists=(("video","highlight_video"),) 统一执行，
+         节点保持纯函数、不直调 db_service。
+"""
 
 from __future__ import annotations
 
-from app.services import db_service, video_editor
+from app.services import video_editor
 from app.workflow.spec import (
     NodeSpec,
     ParamSpec,
@@ -33,6 +37,7 @@ from app.workflow.spec import (
                       description="遍历整段、拼接全部高光回合"),
         ],
         stage="editing",
+        persists=(("video", "highlight_video"),),
     )
 )
 def run(ctx, params):
@@ -56,12 +61,5 @@ def run(ctx, params):
 
     hl_video = video_editor.edit_highlight_video(video, highlight, config)
 
-    # 落库：输出 - 集锦视频
-    task_id = ctx.task_id
-    db_service.record_task_output(
-        task_id, "highlight_video", str(hl_video),
-        hl_video.stat().st_size / (1024 * 1024),
-        target_duration=config.highlight.target_duration,
-    )
-
+    # 批次 C2：产物落库由执行器按 persists=("video","highlight_video") 统一执行
     return {"video": hl_video, "highlight": highlight}

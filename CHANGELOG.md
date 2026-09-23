@@ -14,6 +14,12 @@
 - `pyproject.toml` 新增 `cv` 可选依赖组（`uv sync --extra cv`：torch / ultralytics / mediapipe / transformers / pillow / opencv）；权重约定 `backend/data/models/`（gitignore 忽略）
 - 新增 `tests/test_workflow_cv_nodes.py` 24 用例（schema 15 节点、端口与失败策略契约、参数边界、R4/R5/R8 图校验、节点传参与函数式传递、dtw 模板分类可测路径、示例 B 并联对比图校验、示例 C 图端到端、CvUnavailable skip 级联），全量 253 测试通过
 
+### Changed
+
+- 工作流执行器改为 Kahn 分层（`topo_levels`）执行：同层节点按 `spec.stage` 分组——组间串行（`result.stage` 标量字段阶段上报顺序确定），组内同阶段节点线程池并行（如 `detect.*` 同为 detecting、双 analyze 分支同为 highlighting）；单节点组内联调用保持链式图串行语义，准备/收尾在主线程按 node.id 升序（日志与状态确定可复现）（方案 12 · 批次 C1）
+- 节点落库改声明式（`NodeSpec.persists` / `records_input`）：`preprocess.transcode` 新增 `meta` 输出端口透出 probe 元信息，`preprocess.transcode`/`edit.concat`/`report_technical` 移除 `db_service` 直调、保持纯函数，执行器收尾阶段主线程统一调 `record_task_input`/`record_task_output`（并行执行期零 DB 写，规避 SQLite 多线程写锁风险）；`_transcode_for_upload` 上传转码缓存改 sidecar 临时文件 + `os.replace` 原子落位（同 stem 并行分支不再互踩）（方案 12 · 批次 C2）
+- 新增 `tests/test_workflow_parallel.py` 14 用例（topo_levels 分层/排序/环/禁用、Barrier 并行实证、同层致命失败收尾语义、链式内联、声明式落库契约与纯函数守卫、端到端落库），全量 267 测试通过
+
 ## [0.14.1] - 2026-09-23
 
 ### Added

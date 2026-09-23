@@ -135,12 +135,22 @@ def _transcode_for_upload(video_path: Path, max_height: int = 480, crf: int = 28
 
     直送 StepFun 的副本无需高画质：缩小体积可降低 base64 负载、提升远端解码成功率，
     且不影响最终成片（最终剪辑仍用 720p 预处理文件）。转码失败则回退原始文件。
+
+    并发安全（批次 C1，方案 12 · 0.8）：同层并行的多个分析分支可能同时转码同 stem
+    视频——先写进程/线程级唯一的 sidecar 临时文件，成功后 os.replace 原子替换到
+    共享缓存路径。读者只会读到某个完整文件（POSIX rename 原子），Windows 下目标被
+    占用时 os.replace 抛错走回退分支返回原始文件，不会读到写了一半的内容。
     """
     from app.utils import ffmpeg
     if not ffmpeg.is_available():
         return video_path
+    import os
     import tempfile
+    import threading
     tmp = Path(tempfile.gettempdir()) / f"upload_{video_path.stem}.mp4"
+    staging = Path(tempfile.gettempdir()) / (
+        f"upload_{video_path.stem}.{os.getpid()}.{threading.get_ident()}.part"
+    )
     try:
         ffmpeg.run([
             "ffmpeg", "-y", "-i", str(video_path),
@@ -148,9 +158,10 @@ def _transcode_for_upload(video_path: Path, max_height: int = 480, crf: int = 28
             "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
             "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             "-c:a", "aac", "-b:a", "48k",
-            str(tmp),
+            str(staging),
         ])
-        if tmp.exists() and tmp.stat().st_size > 0:
+        if staging.exists() and staging.stat().st_size > 0:
+            os.replace(staging, tmp)  # 原子落位共享缓存
             logger.info(
                 "视频理解上传副本：{} → {}（{:.1f}MB）",
                 video_path.name, tmp.name, tmp.stat().st_size / (1024 * 1024),
@@ -158,6 +169,9 @@ def _transcode_for_upload(video_path: Path, max_height: int = 480, crf: int = 28
             return tmp
     except Exception as exc:  # noqa: BLE001
         logger.warning("视频上传转码失败，回退原始文件: {}", exc)
+    finally:
+        if staging.exists():
+            staging.unlink(missing_ok=True)
     return video_path
 
 

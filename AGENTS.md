@@ -25,7 +25,7 @@ TennisClip/
 │   │   ├── workflow/         # 可编排工作流系统
 │   │   │   ├── spec.py       # 节点契约：端口类型、参数 Schema、注册表
 │   │   │   ├── graph.py      # 图结构：节点 + 边 + 校验（R1~R10）+ Kahn 拓扑排序
-│   │   │   ├── executor.py   # 执行器：Context 传值 + stage 上报 + 产物投影
+│   │   │   ├── executor.py   # 执行器：Kahn 分层并行 + Context 传值 + 声明式落库 + 产物投影
 │   │   │   ├── presets.py    # 预置编译器：compile_from_legacy / compile_from_config
 │   │   │   └── nodes/        # 15 个内置节点（input.video / preprocess.transcode / ...）
 │   │   └── utils/            # ffmpeg / llm / tasks / logger / media_strategies（视频理解策略）/ cv_*（CV 感知层薄封装）
@@ -129,9 +129,9 @@ TennisClip/
   - `pipeline.stages`（启用的管线阶段有序 JSON 数组，默认 `["preprocess","highlight","edit","report"]`）— `config_service.set_config_value` 校验 JSON 数组且元素 ∈ 合法集合（非法 400），解析时按固定顺序重排。
   - 三项生效值统一由 `config_service.get_pipeline_config(db, config)` 解析（DB 覆盖 > 默认值），在 `main.process_video` 解析后透传 `core.run_pipeline(analysis_mode=, enabled_stages=)`。
 - **可编排工作流系统**（`app/workflow/`）：用户可自定义 DAG 工作流，取代固定四阶段管线。
-  - **节点契约**（`spec.py`）：`Port`（类型化端口）、`ParamSpec`（参数 Schema 驱动前端表单）、`NodeSpec`（完整节点规范）、`@register` 装饰器（导入即注册）。
+  - **节点契约**（`spec.py`）：`Port`（类型化端口）、`ParamSpec`（参数 Schema 驱动前端表单）、`NodeSpec`（完整节点规范）、`@register` 装饰器（导入即注册）。**声明式落库（批次 C2）**：`NodeSpec.persists=((输出端口, outputs.kind),...)` 声明产物文件落库、`NodeSpec.records_input=True` 声明输入元信息落库——由执行器在收尾阶段主线程统一调 `record_task_output`/`record_task_input`，节点不得直调 `db_service`（保持纯函数）。
   - **图结构**（`graph.py`）：`WorkflowGraph` 含节点列表 + 有向边 + 校验（R1~R10 十项规则）+ Kahn 拓扑排序；`frozen` 属性锁定预置图。
-  - **执行器**（`executor.py`）：`Context` 传值 + stage 上报 + 产物投影（`output.artifact` 节点写回 `TaskResult`）。
+  - **执行器**（`executor.py`）：`Context` 传值 + stage 上报 + 产物投影（`output.artifact` 节点写回 `TaskResult`）。**分层并行（批次 C1）**：按 `graph.topo_levels()` Kahn 分层调度——准备（解析输入/级联判定/参数/节点级 config 深拷贝）与收尾（store/声明式落库/状态）在主线程按层内 node.id 升序执行（确定性）；同层节点按 `spec.stage` 分组，组间串行（`result.stage` 标量阶段上报顺序确定）、组内同阶段节点线程池并行（`detect.*` 同为 detecting 等），单节点组内联执行保持链式图串行语义；并行执行期无并发 DB 写（落库集中在收尾主线程）。
   - **预置编译器**（`presets.py`）：`compile_from_legacy(stages, strategy, level)` 将旧管线三元组编译为 `WorkflowGraph`；`compile_from_config(db, config)` 读取配置 KV 后委托编译。编译产出的图 `frozen=True`，禁止修改。
   - **15 个内置节点**：`input.video`（视频输入）、`preprocess.transcode`（预处理转码）、`detect.candidates`（信号候选定位）、`analyze.highlight`（LLM 高光识别）、`post.filter_segments`（片段过滤）、`post.uniform_slices`（均匀切片兜底）、`edit.concat`（剪辑合成）、`report.technical`（技术分析报告）、`output.artifact`（产物投影），以及 CV 感知层 6 节点（方案 12 · Step 2）：`detect.tracknet`（TrackNet 球追踪，track+candidates 双输出）、`detect.court`（球场 14 关键点）、`detect.player`（YOLOv8 球员运动分数→候选）、`detect.pose`（MediaPipe 姿态）、`post.score_highlights`（CLIP 零样本评分，脱离 LLM 产出 highlight）、`post.classify_strokes`（击球分类 cnn/dtw，pose 输入可选）。
   - **CV 感知层契约**：推理薄封装在 `app/utils/cv_*.py`（共享运行时 `cv_runtime.py`），候选聚合复用 `event_detect.track_to_candidates`/`scores_to_candidates`（与旧信号同一套聚类）；依赖/权重缺失抛 `CvUnavailable`，**4 个 detect 节点 `on_failure="skip"` 级联降级、2 个 post 节点保持 fail**；依赖组 `uv sync --extra cv`（torch/ultralytics/mediapipe/transformers），权重放 `backend/data/models/`（gitignore 忽略）；模块级导入零重依赖，无 CV 环境节点注册与 schema 照常工作。

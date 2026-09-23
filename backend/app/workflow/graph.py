@@ -246,6 +246,39 @@ class WorkflowGraph:
             raise ValueError("工作流存在环，无法拓扑排序")
         return order
 
+    def topo_levels(self) -> list[list[str]]:
+        """Kahn 分层：同层节点互无依赖（可并行），层间满足依赖序；每层 node.id 升序。
+
+        批次 C1（文档 12 · 0.8）：执行器按层调度——准备/收尾在主线程按层内 id 升序
+        确定执行，同层 ≥2 节点用线程池并行；展平后仍是合法拓扑序。存在环抛 ValueError
+        （与 topo_order 一致，环在 validate() R7 阶段已会被拦截）。
+        """
+        enabled = {nid: self.nodes[nid] for nid in self.nodes if self.nodes[nid].enabled}
+        in_degree: dict[str, int] = {nid: 0 for nid in enabled}
+        adj: dict[str, list[str]] = {nid: [] for nid in enabled}
+        for e in self.edges:
+            if e.from_node_id in enabled and e.to_node_id in enabled:
+                adj[e.from_node_id].append(e.to_node_id)
+                in_degree[e.to_node_id] = in_degree.get(e.to_node_id, 0) + 1
+
+        levels: list[list[str]] = []
+        current = sorted(nid for nid, deg in in_degree.items() if deg == 0)
+        reached = 0
+        while current:
+            levels.append(current)
+            reached += len(current)
+            ready: list[str] = []
+            for nid in current:
+                for next_id in adj[nid]:
+                    in_degree[next_id] -= 1
+                    if in_degree[next_id] == 0:
+                        ready.append(next_id)
+            current = sorted(ready)
+
+        if reached != len(enabled):
+            raise ValueError("工作流存在环，无法拓扑排序")
+        return levels
+
     def _kahn_order(self, enabled_nodes: dict[str, GraphNode]) -> Optional[list[str]]:
         """Kahn 算法：返回拓扑序（同层 id 升序），存在环返回 None。"""
         in_degree: dict[str, int] = {nid: 0 for nid in enabled_nodes}

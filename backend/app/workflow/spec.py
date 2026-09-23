@@ -24,6 +24,8 @@ class PortType:
     TRACK = "track"
     COURT = "court"
     POSE = "pose"
+    # 结构化元信息 dict（如预处理 duration/width/height/fps，批次 C2 输入落库的数据源）
+    META = "meta"
 
 
 # ---------- 运行时端口值类型（批次 A3）----------
@@ -45,6 +47,7 @@ PORT_PY_TYPES: dict[str, tuple] = {
     PortType.TRACK: (list,),
     PortType.COURT: (dict,),
     PortType.POSE: (dict,),
+    PortType.META: (dict,),
 }
 
 
@@ -113,6 +116,17 @@ class NodeSpec:
     #   "skip" —— 节点失败 → 本节点与下游级联标记 skipped，任务仍 SUCCEEDED
     #             （CV/GPU 类节点用此策略：TrackNet 挂掉退回无候选模式）
     on_failure: str = "fail"
+    # 声明式落库（批次 C2，文档 12 · 0.8）：((输出端口, tasks 表 outputs.kind), ...)。
+    # 节点成功后由执行器在主线程按 node.id 升序统一调 db_service.record_task_output：
+    #   - 端口值为 str/Path → 作为产物文件路径（文件不存在则跳过，等价原节点守卫）
+    #   - 其他类型（如 TechnicalReport）→ 按约定查 task_out/{kind}.json
+    #   - kind == "highlight_video" 时附带 target_duration（集锦时长展示）
+    # 节点因此不直调 db_service，保持纯函数（可测性 + 并行执行期零并发 DB 写）。
+    persists: tuple[tuple[str, str], ...] = ()
+    # 输入元信息落库（批次 C2）：节点成功后执行器按约定调 db_service.record_task_input——
+    # video_path/level 取 Context，duration_seconds 取 "duration" 输出端口，
+    # width/height/fps 取 "meta" 输出端口 dict（节点负责 probe 后经端口透出元信息）。
+    records_input: bool = False
 
 
 # ---------- 注册表 ----------
