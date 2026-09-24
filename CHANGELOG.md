@@ -4,6 +4,18 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.18.0] - 2026-09-24
+
+### Added
+
+- 前端「历史任务」点击**进行中任务** → 接入主界面 TaskCard 实时进度（`store.trackTask` 复用既有 1.5s 轮询 + `workflow_nodes` 节点步骤条），完成/失败任务仍走结果弹窗
+
+## [0.17.1] - 2026-09-24
+
+### Fixed
+
+- TrackNet 权重导出契约适配层（`fetch_tracknet_weights.py`）改为**固定训练分辨率 640×360 推理**（wrapper v2）：训练 `datasets.py` 与参考推理 `infer_on_video.py` 均先 `cv2.resize((640,360))` 再喂网络，节点原直通原始帧分辨率（720p）造成 4× 算力惩罚 + 球尺度分布偏移；v2 统一 `F.interpolate` 缩到 640×360，热图 (1,1,360,640) 由 `_peak_to_point` 等比映射回帧坐标（契约原生支持），去掉补零分支——实测单帧 720p 入参 42 → ~11 CPU-秒，720p 合成球视频 stride=3 定位误差均值 8.1px；同步更新 `cv_runtime.load_torch_model` 降噪 `torch.jit.load` FutureWarning
+
 ## [0.17.0] - 2026-09-24
 
 ### Added

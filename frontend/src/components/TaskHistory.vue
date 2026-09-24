@@ -1,6 +1,6 @@
 <script setup>
 import { computed, watch } from 'vue'
-import { useTaskStore } from '../stores/task'
+import { useTaskStore, isRunningStatus } from '../stores/task'
 import StatusBadge from './StatusBadge.vue'
 
 const store = useTaskStore()
@@ -49,7 +49,21 @@ function fmtDuration(sec) {
 }
 
 function canViewDetail(task) {
-  return task.status === 'succeeded'
+  // 完成/失败查看结果弹窗；进行中跟踪实时进度（主界面）
+  return ['succeeded', 'failed'].includes(task.status)
+}
+
+function isRunning(task) {
+  return isRunningStatus(task.status)
+}
+
+function onTaskClick(task) {
+  if (isRunning(task)) {
+    // 进行中：接入主界面 TaskCard 实时进度（复用既有轮询）
+    store.trackTask(task.task_id)
+  } else if (canViewDetail(task)) {
+    store.viewTask(task.task_id)
+  }
 }
 
 watch(() => store.showHistory, (v) => {
@@ -123,11 +137,13 @@ watch(() => store.showHistory, (v) => {
           :key="task.task_id"
           :class="[
             'rounded-xl border p-3 transition',
-            canViewDetail(task)
-              ? 'cursor-pointer border-slate-700 bg-slate-800/50 hover:border-emerald-500/50 hover:bg-slate-800'
-              : 'border-slate-800 bg-slate-800/30',
+            isRunning(task)
+              ? 'cursor-pointer border-blue-500/30 bg-blue-500/5 hover:border-blue-400/60 hover:bg-blue-500/10'
+              : canViewDetail(task)
+                ? 'cursor-pointer border-slate-700 bg-slate-800/50 hover:border-emerald-500/50 hover:bg-slate-800'
+                : 'border-slate-800 bg-slate-800/30',
           ]"
-          @click="canViewDetail(task) && store.viewTask(task.task_id)"
+          @click="onTaskClick(task)"
         >
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
@@ -139,7 +155,8 @@ watch(() => store.showHistory, (v) => {
           <div class="mt-1.5 flex items-center gap-3 text-[11px] text-slate-500">
             <span>{{ LEVEL_LABELS[task.level] || task.level }}</span>
             <span>耗时 {{ fmtDuration(task.elapsed_seconds) }}</span>
-            <span v-if="task.error" class="truncate text-red-400">{{ task.error }}</span>
+            <span v-if="isRunning(task)" class="text-blue-400">进行中 · 点击查看实时进度</span>
+            <span v-else-if="task.error" class="truncate text-red-400">{{ task.error }}</span>
           </div>
         </li>
       </ul>

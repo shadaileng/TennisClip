@@ -5,6 +5,11 @@ import { readChunks, CHUNK_SIZE } from '../utils/md5'
 // 后端任务状态（TaskStatus 枚举值）
 export const TERMINAL_STATES = ['succeeded', 'failed', 'timeout']
 
+// 是否进行中（可跟踪实时进度）
+export function isRunningStatus(status) {
+  return status === 'pending' || status === 'processing'
+}
+
 export const useTaskStore = defineStore('task', {
   state: () => ({
     current: null,   // 当前任务 TaskResult
@@ -425,6 +430,24 @@ export const useTaskStore = defineStore('task', {
       } catch {
         this.selectedTask = null
         this.showDetail = true
+      }
+    },
+
+    // 跟踪历史任务实时进度（进行中任务）：接入主界面 TaskCard，复用既有轮询链路
+    async trackTask(taskId) {
+      try {
+        // 先查一次实时状态（进行中走内存队列，终态/队列已清理时 DB 兜底）
+        const data = await api.getTask(taskId)
+        this.current = data
+        this.showHistory = false
+        if (TERMINAL_STATES.includes(data.status)) {
+          this.loading = false
+          this.uploadPhase = 'idle'
+        } else {
+          this._startPolling()
+        }
+      } catch {
+        this.error = `任务 ${taskId} 查询失败（服务可能已重启，进度丢失）`
       }
     },
 
