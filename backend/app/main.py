@@ -71,6 +71,56 @@ try:
 except Exception as _seed_exc:  # noqa: BLE001 — 种子失败不影响服务启动
     logger.warning("内置工作流预设种子失败（不阻断启动）: {}", _seed_exc)
 
+def _process_one(
+    video_path: Path,
+    task_id: str,
+    level: str = "intermediate",
+    result: Optional[TaskResult] = None,
+    analysis_mode: Optional[str] = None,
+    enabled_stages: Optional[list] = None,
+) -> TaskResult:
+    """执行单个视频任务（工作流执行器 / legacy 管线分流），落库各节点结果。"""
+    if result is None:
+        result = TaskResult(task_id=task_id, source_video=str(video_path))
+    started = time.monotonic()
+    try:
+        # 检查是否有激活的工作流（优先级：workflow.default_graph_id > legacy 管线）
+        from app.services import config_service
+        from app.workflow.spec import get_fn  # noqa: F811 — 确保节点已注册
+
+        wf_graph = None
+        with db_service.session() as s:
+            wf_cfg = config_service.get_workflow_config(s, config)
+            graph_id_str = wf_cfg.get("default_graph_id")
+
+            if graph_id_str:
+                try:
+                    graph_id = int(graph_id_str)
+                    from app.services import workflow_service
+                    from app.workflow.graph import WorkflowGraph
+                    wf = workflow_service.get_workflow(s, graph_id)
+                    if wf is not None:
+                        import json as _json
+                        graph_dict = _json.loads(wf.graph_json)
+                        wf_graph = WorkflowGraph.from_dict(graph_dict)
+                        logger.info("workflow: 使用激活工作流 id={} name={}", graph_id, wf.name)
+                except (ValueError, TypeError):
+                    pass
+
+        if wf_graph is not None:
+            from app.workflow.executor import Executor
+            executor = Executor(wf_graph, config, result, level=level)
+            executor.execute(video_path)
+        else:
+            run_pipeline(
+                video_path, config, result, level=level,
+                analysis_mode=analysis_mode, enabled_stages=enabled_stages,
+            )
+    finally:
+        result.elapsed_seconds = time.monotonic() - started
+    return result
+
+
 # 任务恢复辅助函数（模块级，须先于下方启动钩子定义）
 def _get_pipeline_cfg() -> dict:
     """读取管线全局配置（启用阶段 / 分析模式 / 层级），DB 覆盖 > 默认值。"""
@@ -133,55 +183,6 @@ try:
         logger.info("task-recovery: 重新入队 {} level={}", _task_id, _level)
 except Exception as _rec_exc:  # noqa: BLE001 — 恢复失败不阻断启动
     logger.warning("任务恢复失败（不阻断启动）: {}", _rec_exc)
-
-
-def _process_one(
-    video_path: Path,
-    task_id: str,
-    level: str = "intermediate",
-    result: Optional[TaskResult] = None,
-    analysis_mode: Optional[str] = None,
-    enabled_stages: Optional[list] = None,
-) -> TaskResult:
-    if result is None:
-        result = TaskResult(task_id=task_id, source_video=str(video_path))
-    started = time.monotonic()
-    try:
-        # 检查是否有激活的工作流（优先级：workflow.default_graph_id > legacy 管线）
-        from app.services import config_service
-        from app.workflow.spec import get_fn  # noqa: F811 — 确保节点已注册
-
-        wf_graph = None
-        with db_service.session() as s:
-            wf_cfg = config_service.get_workflow_config(s, config)
-            graph_id_str = wf_cfg.get("default_graph_id")
-
-            if graph_id_str:
-                try:
-                    graph_id = int(graph_id_str)
-                    from app.services import workflow_service
-                    from app.workflow.graph import WorkflowGraph
-                    wf = workflow_service.get_workflow(s, graph_id)
-                    if wf is not None:
-                        import json as _json
-                        graph_dict = _json.loads(wf.graph_json)
-                        wf_graph = WorkflowGraph.from_dict(graph_dict)
-                        logger.info("workflow: 使用激活工作流 id={} name={}", graph_id, wf.name)
-                except (ValueError, TypeError):
-                    pass
-
-        if wf_graph is not None:
-            from app.workflow.executor import Executor
-            executor = Executor(wf_graph, config, result, level=level)
-            executor.execute(video_path)
-        else:
-            run_pipeline(
-                video_path, config, result, level=level,
-                analysis_mode=analysis_mode, enabled_stages=enabled_stages,
-            )
-    finally:
-        result.elapsed_seconds = time.monotonic() - started
-    return result
 
 
 # 启动环境自检（FFMPEG / 数据库 / 模型提供商 / 数据目录）
