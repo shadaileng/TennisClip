@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +27,7 @@ from app.db_models import (
     TaskInput,
     TaskOutput,
     TaskResult,
+    UploadedVideo,
     _seed_providers,
     _seed_system_config,
 )
@@ -136,6 +139,137 @@ def record_task_input(
             s.commit()
     except Exception as exc:  # noqa: BLE001
         logger.warning("db: record_task_input failed: {}", exc)
+
+
+def list_stale_tasks() -> list[dict]:
+    """列出遗留的未终态任务（pending/processing/timeout），供重启恢复决策。
+
+    返回 [{task_id, status, level, source_video, created_at}]，按创建时间升序。
+    """
+    try:
+        with session() as s:
+            rows = s.query(Task).filter(
+                Task.status.in_(["pending", "processing", "timeout"])
+            ).order_by(Task.created_at.asc()).all()
+            return [
+                {
+                    "task_id": t.task_id,
+                    "status": t.status,
+                    "level": t.level,
+                    "source_video": t.source_video,
+                    "created_at": t.created_at,
+                }
+                for t in rows
+            ]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: list_stale_tasks failed: {}", exc)
+        return []
+
+
+def mark_task_failed(task_id: str, error: str = "service restarted, in-flight task was interrupted") -> bool:
+    """将单个任务标记为 failed（服务重启兜底用）。
+
+    返回是否实际更新了行。
+    """
+    try:
+        with session() as s:
+            t = s.query(Task).filter_by(task_id=task_id).first()
+            if t is None:
+                return False
+            t.status = "failed"
+            t.error = error
+            t.updated_at = datetime.utcnow()
+            s.commit()
+            return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: mark_task_failed failed: {}", exc)
+        return False
+
+
+def recover_stale_tasks() -> list[dict]:
+    """服务重启后恢复非终态任务（pending/processing/timeout）。
+
+    逐个任务尝试：从 task_outputs(kind="uploaded") 反解输入 MD5，确认物理文件
+    与 uploaded_videos 记录仍在 → 可恢复（收集 task_id/level 供重新入队）；
+    文件丢失或无法解析 → 标记 failed。
+    返回可恢复任务列表 [{task_id, level, source_video}]（按创建时间升序）。
+    """
+    recoverable: list[dict] = []
+    try:
+        with session() as s:
+            stale = (
+                s.query(Task)
+                .filter(Task.status.in_(["pending", "processing", "timeout"]))
+                .order_by(Task.created_at.asc())
+                .all()
+            )
+        if not stale:
+            return recoverable
+
+        for task in stale:
+            md5, rel_path = _resolve_input_md5(task.task_id)
+            if md5:
+                rec = _find_uploaded(md5)
+                if rec is not None and _file_exists(rec):
+                    recoverable.append({
+                        "task_id": task.task_id,
+                        "level": task.level,
+                        "source_video": task.source_video,
+                    })
+                    continue
+            # 输入不可用 → 标记 failed
+            _mark_task_failed(task.task_id, "任务在服务重启时中断，且输入视频不可用（文件缺失或未登记）")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: recover_stale_tasks failed: {}", exc)
+    return recoverable
+
+
+def _resolve_input_md5(task_id: str) -> tuple[Optional[str], Optional[str]]:
+    """从 task_outputs(kind="uploaded") 反解输入 MD5 与 rel_path。
+
+    物理文件名 = {md5}{ext}（upload_service 约定），取首个 32 位十六进制段。
+    """
+    with session() as s:
+        out = (
+            s.query(TaskOutput)
+            .filter_by(task_id=task_id, kind="uploaded")
+            .order_by(TaskOutput.created_at.asc())
+            .first()
+        )
+    if out is None:
+        return None, None
+    name = Path(out.file_path).name
+    m = re.match(r"^([0-9a-f]{32})", name)
+    if not m:
+        return None, None
+    md5 = m.group(1)
+    rec = _find_uploaded(md5)
+    rel_path = rec.rel_path if rec else None
+    return md5, rel_path
+
+
+def _find_uploaded(md5: str) -> Optional[UploadedVideo]:
+    with session() as s:
+        return s.query(UploadedVideo).filter_by(md5=md5).first()
+
+
+def _file_exists(rec: UploadedVideo) -> bool:
+    try:
+        from app.config import load_config
+        cfg = load_config()
+    except Exception:  # noqa: BLE001
+        return False
+    return (cfg.data_path / rec.rel_path).exists()
+
+
+def _mark_task_failed(task_id: str, error: str) -> None:
+    with session() as s:
+        task = s.query(Task).filter_by(task_id=task_id).first()
+        if task:
+            task.status = "failed"
+            task.error = error
+            task.updated_at = datetime.utcnow()
+        s.commit()
 
 
 def record_task_finish(

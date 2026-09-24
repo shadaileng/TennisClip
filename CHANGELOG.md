@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.18.1] - 2026-09-24
+
+### Fixed
+
+- 服务重启后遗留的非终态任务（pending/processing/timeout）变僵尸：`main.py` 启动钩子（`init_db` 之后）扫描 DB 非终态任务，逐个处理——输入视频仍登记且物理存在（`task_outputs` kind=uploaded 反解 MD5 → `uploaded_videos` 反查 rel_path）→ 保留原 task_id/level 重新入队续跑（预处理输出已落盘，仅重做 LLM/CV 推理部分）；输入不可用 → 标记 failed 并附中断原因；恢复块仅告警不阻断启动，单任务失败不影响其他任务；新增 `tests/test_task_recovery.py` 7 用例（stale 列表/标记 failed/可恢复/不可恢复/幂等/启动钩子入队），全量 282 测试通过
+
 ## [0.18.0] - 2026-09-24
 
 ### Added

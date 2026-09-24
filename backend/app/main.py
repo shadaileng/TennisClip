@@ -71,6 +71,119 @@ try:
 except Exception as _seed_exc:  # noqa: BLE001 — 种子失败不影响服务启动
     logger.warning("内置工作流预设种子失败（不阻断启动）: {}", _seed_exc)
 
+# 任务恢复辅助函数（模块级，须先于下方启动钩子定义）
+def _get_pipeline_cfg() -> dict:
+    """读取管线全局配置（启用阶段 / 分析模式 / 层级），DB 覆盖 > 默认值。"""
+    from app.services import config_service
+    with db_service.session() as s:
+        return config_service.get_pipeline_config(s, config)
+
+
+def _resolve_recovered_video(task_id: str) -> Optional[Path]:
+    """恢复任务时定位输入视频物理路径：DB task_outputs(kind=uploaded) → uploaded_videos 反查。
+
+    返回绝对 Path；输入不可用（文件缺失 / 未登记）返回 None。
+    """
+    from app.services import upload_service
+    from app.db_models import TaskOutput as _TaskOutput
+    with db_service.session() as s:
+        out = (
+            s.query(_TaskOutput).filter_by(task_id=task_id, kind="uploaded")
+            .order_by(_TaskOutput.created_at.asc()).first()
+        )
+        if out is None:
+            return None
+        # 物理路径 = data_path / uploads/{md5}{ext}；文件名含 md5，反查 uploaded_videos 确认登记
+        candidate = config.data_path / out.file_path.split("uploads/")[-1]
+        if not candidate.exists():
+            # 兜底：从文件名反解 md5 再查 uploaded_videos
+            import re
+            m = re.match(r"^([0-9a-f]{32})", candidate.name)
+            if not m:
+                return None
+            md5 = m.group(1)
+            rec = upload_service.find_by_md5(s, md5)
+            if rec is None or not upload_service.exists_physically(config, rec):
+                return None
+            candidate = config.data_path / rec.rel_path
+        return candidate if candidate.exists() else None
+
+
+# 任务恢复：服务意外关闭后遗留的非终态任务（pending/processing/timeout）
+# ① 输入视频仍登记且物理存在 → 保留原 task_id/level 重新入队续跑（预处理输出已落盘，
+#    仅重做 LLM/CV 推理部分）；② 输入不可用 → 标记 failed，避免僵尸状态。
+# 恢复在内存队列为空时执行（刚启动），幂等；单个任务失败不影响其他任务。
+try:
+    _recovered = db_service.recover_stale_tasks()
+    _recovered_cfg = _get_pipeline_cfg() if _recovered else None
+    for _t in _recovered:
+        _task_id = _t["task_id"]
+        _level = _t["level"]
+        _vp = _resolve_recovered_video(_task_id)
+        if _vp is None:
+            # 二次校验（recover 已判定可用，但物理文件可能在两次查询间被清理）
+            db_service.mark_task_failed(_task_id, "任务在服务重启时中断，且输入视频已不可用")
+            continue
+        queue.submit(
+            lambda r, vp=_vp, lv=_level, am=_recovered_cfg["highlight_strategy"], es=_recovered_cfg["enabled_stages"]: _process_one(
+                vp, _task_id, lv, result=r, analysis_mode=am, enabled_stages=es,
+            ),
+            task_id=_task_id,
+        )
+        logger.info("task-recovery: 重新入队 {} level={}", _task_id, _level)
+except Exception as _rec_exc:  # noqa: BLE001 — 恢复失败不阻断启动
+    logger.warning("任务恢复失败（不阻断启动）: {}", _rec_exc)
+
+
+def _process_one(
+    video_path: Path,
+    task_id: str,
+    level: str = "intermediate",
+    result: Optional[TaskResult] = None,
+    analysis_mode: Optional[str] = None,
+    enabled_stages: Optional[list] = None,
+) -> TaskResult:
+    if result is None:
+        result = TaskResult(task_id=task_id, source_video=str(video_path))
+    started = time.monotonic()
+    try:
+        # 检查是否有激活的工作流（优先级：workflow.default_graph_id > legacy 管线）
+        from app.services import config_service
+        from app.workflow.spec import get_fn  # noqa: F811 — 确保节点已注册
+
+        wf_graph = None
+        with db_service.session() as s:
+            wf_cfg = config_service.get_workflow_config(s, config)
+            graph_id_str = wf_cfg.get("default_graph_id")
+
+            if graph_id_str:
+                try:
+                    graph_id = int(graph_id_str)
+                    from app.services import workflow_service
+                    from app.workflow.graph import WorkflowGraph
+                    wf = workflow_service.get_workflow(s, graph_id)
+                    if wf is not None:
+                        import json as _json
+                        graph_dict = _json.loads(wf.graph_json)
+                        wf_graph = WorkflowGraph.from_dict(graph_dict)
+                        logger.info("workflow: 使用激活工作流 id={} name={}", graph_id, wf.name)
+                except (ValueError, TypeError):
+                    pass
+
+        if wf_graph is not None:
+            from app.workflow.executor import Executor
+            executor = Executor(wf_graph, config, result, level=level)
+            executor.execute(video_path)
+        else:
+            run_pipeline(
+                video_path, config, result, level=level,
+                analysis_mode=analysis_mode, enabled_stages=enabled_stages,
+            )
+    finally:
+        result.elapsed_seconds = time.monotonic() - started
+    return result
+
+
 # 启动环境自检（FFMPEG / 数据库 / 模型提供商 / 数据目录）
 # 任一检查不通过仅告警、不阻断启动；结果挂载到 app.state 供 /health 暴露
 from app.utils.environment import run_startup_checks
@@ -129,55 +242,6 @@ def health() -> dict:
             for name, result in app.state.environment_checks.items()
         },
     }
-
-
-def _process_one(
-    video_path: Path,
-    task_id: str,
-    level: str = "intermediate",
-    result: Optional[TaskResult] = None,
-    analysis_mode: Optional[str] = None,
-    enabled_stages: Optional[list] = None,
-) -> TaskResult:
-    if result is None:
-        result = TaskResult(task_id=task_id, source_video=str(video_path))
-    started = time.monotonic()
-    try:
-        # 检查是否有激活的工作流（优先级：workflow.default_graph_id > legacy 管线）
-        from app.services import config_service
-        from app.workflow.spec import get_fn  # noqa: F811 — 确保节点已注册
-
-        wf_graph = None
-        with db_service.session() as s:
-            wf_cfg = config_service.get_workflow_config(s, config)
-            graph_id_str = wf_cfg.get("default_graph_id")
-
-            if graph_id_str:
-                try:
-                    graph_id = int(graph_id_str)
-                    from app.services import workflow_service
-                    from app.workflow.graph import WorkflowGraph
-                    wf = workflow_service.get_workflow(s, graph_id)
-                    if wf is not None:
-                        import json as _json
-                        graph_dict = _json.loads(wf.graph_json)
-                        wf_graph = WorkflowGraph.from_dict(graph_dict)
-                        logger.info("workflow: 使用激活工作流 id={} name={}", graph_id, wf.name)
-                except (ValueError, TypeError):
-                    pass
-
-        if wf_graph is not None:
-            from app.workflow.executor import Executor
-            executor = Executor(wf_graph, config, result, level=level)
-            executor.execute(video_path)
-        else:
-            run_pipeline(
-                video_path, config, result, level=level,
-                analysis_mode=analysis_mode, enabled_stages=enabled_stages,
-            )
-    finally:
-        result.elapsed_seconds = time.monotonic() - started
-    return result
 
 
 @app.post("/api/v1/process")
