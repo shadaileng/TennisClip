@@ -71,6 +71,7 @@ cd backend
 uv sync              # 安装依赖（自动创建 backend/.venv）
 uv sync --extra dev  # 含 pytest / opencv
 uv sync --extra cv   # 可选：CV 感知层（torch/ultralytics/mediapipe/transformers）
+uv run python scripts/fetch_tracknet_weights.py  # 可选：一键下载转换 TrackNet 权重 → data/models/tracknet.pth
 ```
 
 需系统安装 [FFMPEG](https://ffmpeg.org/)（Windows 可用 `winget install Gyan.FFmpeg`）。

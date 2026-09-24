@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.17.0] - 2026-09-24
+
+### Added
+
+- 新增 `backend/scripts/fetch_tracknet_weights.py` TrackNet 权重一键下载转换脚本：默认 HuggingFace 源（`vishnushenoy09/tracknet-v1-tennis`，支持 `--url` / `--from-file` 与 `HF_ENDPOINT` 镜像）→ 识别 TorchScript/state_dict/整模 pickle → 装入内置 TrackNetV1 参考结构（126 键严格对位）→ 节点契约适配（通道反序 [8..0] 对齐训练栈 (当前,前,前前)×BGR、非 8 倍数分辨率补零裁回、输出 `1−P(背景类)` 球概率热图）→ `torch.jit.script` 导出 `data/models/tracknet.pth` → 双重冒烟（常规/补零前向 + `cv_runtime.load_torch_model`）；节点级实测：合成球视频检出 26 点、定位误差均值 4px
+
 ## [0.16.1] - 2026-09-23
 
 ### Fixed
