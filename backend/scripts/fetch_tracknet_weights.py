@@ -18,14 +18,16 @@ HuggingFace 直连不畅时可 ``export HF_ENDPOINT=https://hf-mirror.com`` 后�
 1. **通道反序 [8..0]**：本项目 ``cv_tracknet`` 输入为 (前前,前,当前)×RGB 栈，
    而公开实现（yastrebksv/TrackNet）训练用 (当前,前,前前)×BGR 栈——
    时间反序与 R/B 交换恰好复合为整段通道反转，一步对齐；
-2. **非 8 倍数分辨率**：右/下补零推理后裁回原尺寸（节点按原始帧分辨率入参，
-   热图尺寸 ≠ 帧尺寸时 ``_peak_to_point`` 也会等比映射）；
-3. **输出语义**：``1 − P(背景类)`` 单通道「球存在概率」热图 (B,1,H,W)，
-   与节点峰值取点契约一致（对标签取值 {0,1} / {0,255} / 高斯分布均鲁棒）。
+2. **固定训练分辨率 640×360**：训练（datasets.py）与参考推理（infer_on_video.py）
+   均先 ``cv2.resize((640,360))`` 再喂网络——统一缩放到该尺寸既对齐输入分布，
+   又避免 720p+ 原生推理的数倍算力惩罚；
+3. **输出语义**：``1 − P(背景类)`` 单通道「球存在概率」热图 (B,1,360,640)，
+   与节点峰值取点契约一致（热图尺寸 ≠ 帧尺寸时由 ``_peak_to_point`` 等比映射回帧坐标，
+   对标签取值 {0,1} / {0,255} / 高斯分布均鲁棒）。
 
 处理流程：获取源文件 → 格式识别（TorchScript / state_dict / 整模 pickle）→
 装入内置 TrackNetV1 参考结构（严格对位校验）→ 契约适配层导出 TorchScript →
-落盘前冒烟（含补零分支）→ 经 ``cv_runtime.load_torch_model`` 二次确认。
+落盘前冒烟 → 经 ``cv_runtime.load_torch_model`` 二次确认。
 """
 
 from __future__ import annotations
@@ -147,10 +149,12 @@ def _build_classes(nn, torch, F):
             return self.conv18(x)
 
     class TrackNetHeatmap(nn.Module):
-        """节点契约适配层：通道反序 → 补零对齐 8 倍数 → 推理 → 球概率热图 → 裁回。
+        """节点契约适配层：通道反序 → 缩放至训练分辨率 → 推理 → 球概率热图。
 
-        输入 (B,9,H,W) float 0~1（节点栈：前前,前,当前 × RGB）；
-        输出 (B,1,H,W) ∈ [0,1]（1 − P(背景类) = 球存在概率）。
+        输入 (B,9,H,W) float 0~1（节点栈：前前,前,当前 × RGB，任意帧尺寸）；
+        输出 (B,1,360,640) ∈ [0,1]（1 − P(背景类) = 球存在概率）。
+        固定 640×360 = 训练/参考推理同款尺寸（对齐分布 + 避免大分辨率原生
+        推理的算力惩罚）；热图→帧坐标的等比映射由 _peak_to_point 完成。
         """
 
         def __init__(self, backbone: nn.Module) -> None:
@@ -161,19 +165,10 @@ def _build_classes(nn, torch, F):
 
         def forward(self, x):
             x = torch.index_select(x, 1, self.reorder)
-            h = int(x.shape[2])
-            w = int(x.shape[3])
-            # 补零步长 8（3 次池化 / 3 次上采样）；字面量便于 TorchScript 编译
-            pad_multiple = 8
-            ph = (pad_multiple - h % pad_multiple) % pad_multiple
-            pw = (pad_multiple - w % pad_multiple) % pad_multiple
-            if ph != 0 or pw != 0:
-                x = F.pad(x, (0, pw, 0, ph))
-            logits = self.backbone(x)  # (B, 256, H', W')
-            prob = 1.0 - torch.softmax(logits, dim=1)[:, :1]
-            if ph != 0 or pw != 0:
-                prob = prob[:, :, :h, :w]
-            return prob
+            # 统一到训练分辨率（datasets.py / infer_on_video.py 同款 cv2.resize((640,360))）
+            x = F.interpolate(x, size=(360, 640), mode="bilinear", align_corners=False)
+            logits = self.backbone(x)  # (B, 256, 360, 640)
+            return 1.0 - torch.softmax(logits, dim=1)[:, :1]  # (B, 1, 360, 640)
 
     return TrackNetV1, TrackNetHeatmap
 
@@ -312,19 +307,21 @@ def _convert(torch, nn, F, source: Path, out: Path) -> None:
     tmp = out.with_name(out.name + ".tmp")
     scripted.save(str(tmp))
 
-    # 落盘前冒烟：常规分辨率 + 补零分支（非 8 倍数）
-    print("  冒烟前向：360x640 与 361x641…")
+    # 落盘前冒烟：原生 / 720p 下采样 / 任意尺寸 → 恒输出训练分辨率热图
+    print("  冒烟前向：360x640 / 720x1280 / 361x641 → 期望热图 360x640…")
     with torch.no_grad():
         reloaded = torch.jit.load(str(tmp))
-        y1 = reloaded(torch.rand(1, 9, 360, 640))
-        y2 = reloaded(torch.rand(1, 9, 361, 641))
-    for y, expect in ((y1, (1, 1, 360, 640)), (y2, (1, 1, 361, 641))):
-        if tuple(y.shape) != expect:
-            tmp.unlink(missing_ok=True)
-            raise FetchError(f"输出形状 {tuple(y.shape)} ≠ 期望 {expect}")
-        if not bool(torch.isfinite(y).all()) or float(y.min()) < -1e-6 or float(y.max()) > 1 + 1e-6:
-            tmp.unlink(missing_ok=True)
-            raise FetchError("输出含非有限值或超出 [0,1] 值域")
+        cases = ((1, 9, 360, 640), (1, 9, 720, 1280), (1, 9, 361, 641))
+        for shape in cases:
+            y = reloaded(torch.rand(*shape))
+            if tuple(y.shape) != (1, 1, 360, 640):
+                tmp.unlink(missing_ok=True)
+                raise FetchError(
+                    f"输入 {shape} 输出 {tuple(y.shape)} ≠ 期望 (1, 1, 360, 640)"
+                )
+            if not bool(torch.isfinite(y).all()) or float(y.min()) < -1e-6 or float(y.max()) > 1 + 1e-6:
+                tmp.unlink(missing_ok=True)
+                raise FetchError("输出含非有限值或超出 [0,1] 值域")
     tmp.replace(out)
     print(f"  已写入 {out}（{out.stat().st_size // 1024} KB）")
 

@@ -57,10 +57,15 @@ def load_torch_model(path: Path) -> Any:
     state_dict 裸权重不支持——需先导出为上述格式，报错文案会给出指引。
     """
     torch = require("torch")
-    try:
-        return torch.jit.load(str(path)).eval()
-    except Exception:  # noqa: BLE001  非 TorchScript，转普通加载
-        pass
+    import warnings
+
+    with warnings.catch_warnings():
+        # torch.jit.load 弃用提示（FutureWarning 引导转 torch.export）与加载失败噪音同级降噪
+        warnings.filterwarnings("ignore", category=FutureWarning, module=".*torch.jit.*")
+        try:
+            return torch.jit.load(str(path)).eval()
+        except Exception:  # noqa: BLE001  非 TorchScript，转普通加载
+            pass
     try:
         obj = torch.load(str(path), map_location="cpu", weights_only=False)
     except Exception as exc:  # noqa: BLE001
