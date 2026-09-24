@@ -101,10 +101,19 @@ def session() -> Session:
 # ---------- 任务生命周期 ----------
 
 def record_task_start(task_id: str, source_video: str, level: str) -> None:
-    """记录任务创建（输入信息随后单独写 task_inputs）。"""
+    """记录任务创建（输入信息随后单独写 task_inputs）。
+
+    幂等：task 行已存在（恢复续跑场景）则仅更新 status=processing，不 INSERT；
+    避免 UNIQUE constraint failed: tasks.task_id 告警。
+    """
     try:
         with session() as s:
-            s.add(Task(task_id=task_id, status="pending", level=level, source_video=source_video))
+            existing = s.query(Task).filter_by(task_id=task_id).first()
+            if existing is not None:
+                existing.status = "processing"
+                existing.updated_at = datetime.utcnow()
+            else:
+                s.add(Task(task_id=task_id, status="pending", level=level, source_video=source_video))
             s.commit()
     except Exception as exc:  # noqa: BLE001
         logger.warning("db: record_task_start failed: {}", exc)
@@ -190,9 +199,10 @@ def recover_stale_tasks() -> list[dict]:
     """服务重启后恢复非终态任务（pending/processing/timeout）。
 
     逐个任务尝试：从 task_outputs(kind="uploaded") 反解输入 MD5，确认物理文件
-    与 uploaded_videos 记录仍在 → 可恢复（收集 task_id/level 供重新入队）；
+    与 uploaded_videos 记录仍在 → 可恢复（收集 task_id/level/input_md5 供重新入队）；
     文件丢失或无法解析 → 标记 failed。
-    返回可恢复任务列表 [{task_id, level, source_video}]（按创建时间升序）。
+    返回可恢复任务列表 [{task_id, level, source_video, input_md5}]（按创建时间升序）。
+    调用方（main.py 恢复钩子）应基于 input_md5 做同视频去重，仅保留每组最新任务。
     """
     recoverable: list[dict] = []
     try:
@@ -215,6 +225,7 @@ def recover_stale_tasks() -> list[dict]:
                         "task_id": task.task_id,
                         "level": task.level,
                         "source_video": task.source_video,
+                        "input_md5": md5,
                     })
                     continue
             # 输入不可用 → 标记 failed

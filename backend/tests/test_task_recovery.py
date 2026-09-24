@@ -42,17 +42,22 @@ def _tid(prefix: str = "trec") -> str:
 
 def _seed_stale_task(task_id: str, level: str = "all",
                      uploaded_md5: str | None = None,
-                     status: str = "pending") -> None:
-    """构造一条非终态任务（模拟服务重启时遗留的 pending/processing 任务）。"""
+                     status: str = "pending",
+                     register_upload: bool = True) -> None:
+    """构造一条非终态任务（模拟服务重启时遗留的 pending/processing 任务）。
+
+    register_upload=False 时复用已登记的 uploaded_videos 记录（同视频多任务场景），
+    只写 TaskOutput 不重复写 UploadedVideo（md5 主键唯一）。
+    """
     config = load_config()
     with db_service.session() as s:
         s.add(Task(task_id=task_id, status=status, level=level,
                    source_video=f"/fake/{task_id}.mp4"))
         if uploaded_md5:
-            # 模拟 upload_service 落盘记录
             rel_path = f"uploads/{uploaded_md5}.mp4"
-            s.add(UploadedVideo(md5=uploaded_md5, ext=".mp4", rel_path=rel_path,
-                                original_name=f"{task_id}.mp4", size_bytes=1024))
+            if register_upload:
+                s.add(UploadedVideo(md5=uploaded_md5, ext=".mp4", rel_path=rel_path,
+                                    original_name=f"{task_id}.mp4", size_bytes=1024))
             s.add(TaskOutput(task_id=task_id, kind="uploaded",
                              file_path=str(config.data_path / rel_path),
                              file_size_mb=0.001))
@@ -111,6 +116,58 @@ def test_main_recovery_hook_requeues_running_task():
         video_file.unlink(missing_ok=True)
 
 
+def test_recovery_hook_dedups_same_video_to_newest():
+    """main 恢复钩子同视频去重：同一 input_md5 仅保留最新任务，旧任务标记 failed。
+
+    复现 3 个任务同视频并行 → CPU 争抢 → 全部撞 ffmpeg 300s 超时的场景：
+    去重后只保留最新 1 个入队，其余 2 个标记 failed，避免资源争抢。
+    """
+    from app.main import _resolve_recovered_video, queue
+
+    md5 = uuid.uuid4().hex
+    tid_old, tid_mid, tid_new = _tid(), _tid(), _tid()
+    config = load_config()
+    up_dir = config.data_path / "uploads"
+    up_dir.mkdir(parents=True, exist_ok=True)
+    video_file = up_dir / f"{md5}.mp4"
+    video_file.write_bytes(b"fake-video-data")
+    try:
+        # 同视频 3 个遗留任务（created_at 递增 = old < mid < new）
+        # 上传记录只登记一次（md5 主键唯一），其余任务复用
+        _seed_stale_task(tid_old, uploaded_md5=md5, status="pending")
+        _seed_stale_task(tid_mid, uploaded_md5=md5, status="pending", register_upload=False)
+        _seed_stale_task(tid_new, uploaded_md5=md5, status="processing", register_upload=False)
+
+        # 同 main.py 恢复块逻辑：按 input_md5 分组，每组保留最新
+        recovered = db_service.recover_stale_tasks()
+        by_md5: dict[str, list[dict]] = {}
+        for t in recovered:
+            by_md5.setdefault(t.get("input_md5") or "", []).append(t)
+        group = by_md5.get(md5, [])
+        assert len(group) == 3
+        keep, dups = group[-1], group[:-1]
+        assert keep["task_id"] == tid_new
+
+        # 重复任务标记 failed
+        for d in dups:
+            assert db_service.mark_task_failed(
+                d["task_id"], "同视频已保留更新任务，避免并行争抢资源"
+            ) is True
+        # 仅保留最新任务入队
+        vp = _resolve_recovered_video(tid_new)
+        assert vp is not None and vp.exists()
+        queue.submit(lambda r: r, task_id=tid_new)
+        assert queue.get(tid_new) is not None
+
+        # 旧任务已终态 failed
+        with db_service.session() as s:
+            for old in (tid_old, tid_mid):
+                row = s.query(Task).filter_by(task_id=old).first()
+                assert row.status == "failed"
+    finally:
+        video_file.unlink(missing_ok=True)
+
+
 def test_recover_stale_tasks_recoverable_when_uploaded_exists():
     config = load_config()
     md5 = uuid.uuid4().hex  # 随机 md5，避免持久库残留
@@ -144,6 +201,25 @@ def test_recover_stale_tasks_marks_failed_when_input_missing():
         t = s.query(Task).filter_by(task_id=tid).first()
         assert t.status == "failed"
         assert t.error is not None and "重启" in t.error
+
+
+def test_recover_stale_tasks_returns_input_md5_for_dedup():
+    """recover_stale_tasks 返回项含 input_md5，供 main.py 钩子做同视频去重。"""
+    config = load_config()
+    md5 = uuid.uuid4().hex
+    tid = _tid()
+    up_dir = config.data_path / "uploads"
+    up_dir.mkdir(parents=True, exist_ok=True)
+    video_file = up_dir / f"{md5}.mp4"
+    video_file.write_bytes(b"fake-video-data")
+    try:
+        _seed_stale_task(tid, uploaded_md5=md5)
+        recovered = db_service.recover_stale_tasks()
+        item = next((r for r in recovered if r["task_id"] == tid), None)
+        assert item is not None
+        assert item["input_md5"] == md5
+    finally:
+        video_file.unlink(missing_ok=True)
 
 
 def test_recover_stale_tasks_idempotent():

@@ -163,12 +163,29 @@ def _resolve_recovered_video(task_id: str) -> Optional[Path]:
 # ① 输入视频仍登记且物理存在 → 保留原 task_id/level 重新入队续跑（预处理输出已落盘，
 #    仅重做 LLM/CV 推理部分）；② 输入不可用 → 标记 failed，避免僵尸状态。
 # 恢复在内存队列为空时执行（刚启动），幂等；单个任务失败不影响其他任务。
+# 同视频去重：同一 input_md5 的多个遗留任务仅保留最新一个入队，其余标记 failed，
+# 避免 N 个任务并行争抢 CPU（ffmpeg 预处理）且全部撞 300s 超时。
 try:
     _recovered = db_service.recover_stale_tasks()
     _recovered_cfg = _get_pipeline_cfg() if _recovered else None
+
+    # 按 input_md5 分组（列表按 created_at 升序，每组末尾 = 最新任务）
+    _by_md5: dict[str, list[dict]] = {}
     for _t in _recovered:
-        _task_id = _t["task_id"]
-        _level = _t["level"]
+        _by_md5.setdefault(_t.get("input_md5") or "", []).append(_t)
+
+    for _group in _by_md5.values():
+        _keep, _dups = _group[-1], _group[:-1]
+        for _d in _dups:
+            db_service.mark_task_failed(
+                _d["task_id"],
+                "任务在服务重启时中断，且同视频已保留更新任务 "
+                f"{_keep['task_id']}，避免并行争抢资源",
+            )
+            logger.info("task-recovery: 跳过重复任务 {}（保留 {}）", _d["task_id"], _keep["task_id"])
+
+        _task_id = _keep["task_id"]
+        _level = _keep["level"]
         _vp = _resolve_recovered_video(_task_id)
         if _vp is None:
             # 二次校验（recover 已判定可用，但物理文件可能在两次查询间被清理）

@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.18.2] - 2026-09-24
+
+### Fixed
+
+- 恢复钩子同视频去重：`main.py` 启动恢复块按 `input_md5` 分组，同一视频多个遗留非终态任务仅保留最新 1 个入队续跑，其余标记 failed（避免 N 任务并行争抢 CPU 导致 ffmpeg 预处理全部撞 300s 超时）；`recover_stale_tasks` 返回项新增 `input_md5` 字段；`record_task_start` 幂等化（task 行已存在时仅更新 status=processing、不再 INSERT，消除 UNIQUE constraint 告警）；新增 3 用例（input_md5 透出 / 同视频去重保留最新 / 上传记录复用），`test_task_recovery.py` 9 用例全绿
+
 ## [0.18.1] - 2026-09-24
 
 ### Fixed

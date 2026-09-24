@@ -1,6 +1,6 @@
 {
   "name": "tennisclip-ai",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "private": true,
   "type": "module",
   "description": "TennisClip AI 总项目：根目录托管 VitePress 文档站（docs/），含 backend/ 与 frontend/ 子项目",
