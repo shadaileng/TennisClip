@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.19.0] - 2026-09-24
+
+### Added
+
+- 预处理转码节点（`preprocess.transcode`）`height`/`fps` 参数真正生效：`VideoConfig` 新增 `resolution_height` 属性（解析 `720p/1080p/360p` 为目标高度），`preprocess.py` 的 ffmpeg scale 读 `config.video.resolution_height` 不再硬编码 720p，节点 `run()` 将 `params["height"]`/`params["fps"]` 写入节点级深拷贝 `ctx.config.video`；CV 增强工作流（id=4）`n2.params` 设 `{"height":360,"fps":30}` 使预处理与 TrackNet 推理同分辨率（360p），tracknet 段算力 ~4× 下降；新增 2 测试用例（720p 默认 + 360p 可配），全量 284 测试通过
+
 ## [0.18.2] - 2026-09-24
 
 ### Fixed

@@ -83,6 +83,14 @@ class VideoConfig:
     sample_rate: int = 30
     max_input_seconds: int = 300
 
+    @property
+    def resolution_height(self) -> int:
+        """解析 resolution 字符串（如 720p/1080p/360p）为目标高度像素，缺省 720。"""
+        try:
+            return int(self.resolution.rstrip("pP"))
+        except (ValueError, AttributeError):
+            return 720
+
 
 @dataclass
 class HighlightConfig:

@@ -51,6 +51,10 @@ def run(ctx, params):
 
     # 节点级参数覆盖（ctx.config 是节点级深拷贝，直接改写不影响全局）
     config.video.max_input_seconds = params["max_input_seconds"]
+    # 目标高度/帧率：ParamSpec height/fps 经 config.video 透传给 preprocess，
+    # preprocess 读 resolution_height（默认 720）与 fps，不再硬编码 720p。
+    config.video.resolution = f"{params['height']}p"
+    config.video.fps = params["fps"]
     processed_video = preprocess.preprocess(video_path, config, work_dir=task_out)
     meta = preprocess.probe_video(processed_video)
 

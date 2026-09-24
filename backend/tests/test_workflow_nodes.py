@@ -74,6 +74,36 @@ def test_preprocess_transcode_calls_preprocess(tmp_path, monkeypatch):
     assert result["video"] == tmp_path / "processed.mp4"
     assert result["duration"] == 120.5
     assert called["video"] == tmp_path / "input.mp4"
+    # 分辨率/帧率透传校验：height=720 → resolution="720p"，fps=30
+    assert called["config"].video.resolution == "720p"
+    assert called["config"].video.fps == 30
+
+
+def test_preprocess_transcode_height_360p(tmp_path, monkeypatch):
+    """n2 高度参数可配：height=360 时 config.video.resolution="360p"（CV 增强流降本场景）。"""
+    from app.workflow.nodes import preprocess_transcode
+
+    called = {}
+
+    def fake_preprocess(video_path, config, work_dir=None):
+        called["video"] = video_path
+        called["config"] = config
+        return tmp_path / "processed.mp4"
+
+    def fake_probe(path):
+        return {"duration": 120.5, "width": 640, "height": 360, "fps": 30.0}
+
+    from app.services import preprocess as pre_svc
+    monkeypatch.setattr(pre_svc, "preprocess", fake_preprocess)
+    monkeypatch.setattr(pre_svc, "probe_video", fake_probe)
+    from app.services import db_service
+    monkeypatch.setattr(db_service, "record_task_input", lambda **kw: None)
+
+    ctx = FakeContext(video_path=tmp_path / "input.mp4", task_out=tmp_path)
+    preprocess_transcode.run(ctx, {"height": 360, "fps": 30, "max_input_seconds": 300})
+    assert called["config"].video.resolution == "360p"
+    assert called["config"].video.resolution_height == 360
+    assert called["config"].video.fps == 30
 
 
 # ---------- TC-08: detect.candidates 透传 mode/top_n ----------
