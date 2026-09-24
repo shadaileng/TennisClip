@@ -440,14 +440,16 @@ export const useTaskStore = defineStore('task', {
         const data = await api.getTask(taskId)
         this.current = data
         this.showHistory = false
+        // 切换到任务跟踪时清除历史遗留的 error 提示，避免上次失败信息混入当前任务展示
+        this.error = null
         if (TERMINAL_STATES.includes(data.status)) {
           this.loading = false
           this.uploadPhase = 'idle'
         } else {
           this._startPolling()
         }
-      } catch {
-        this.error = `任务 ${taskId} 查询失败（服务可能已重启，进度丢失）`
+      } catch (e) {
+        this.error = `任务 ${taskId} 查询失败（服务可能已重启，进度丢失）：${e.message || e}`
       }
     },
 

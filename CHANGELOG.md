@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.19.1] - 2026-09-24
+
+### Fixed
+
+- 前端跟踪历史进行中任务时，`trackTask` 先清除遗留 `store.error`（上次失败提示）再接入实时进度，避免主界面仍显示上一次失败信息；`db_service.record_task_start` 恢复续跑场景仅更新 status=processing 不清空 error（前端按 status 判断展示）
+
 ## [0.19.0] - 2026-09-24
 
 ### Added
