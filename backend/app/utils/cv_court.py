@@ -30,10 +30,10 @@ def _infer_points(model, torch, rgb_frame, device: str = "cpu"):
     契约：输出与输入同分辨率的像素坐标；模型在缩放分辨率上推理时
     自行还原（导出前接坐标还原层），本模块不再猜测缩放。
     """
+    # .to(device) 必须在 / 255.0 之前（否则解析为 255.0.to(device) → float 无 .to）
     tensor = (
         torch.from_numpy(rgb_frame.copy())
-        .permute(2, 0, 1).unsqueeze(0).float() / 255.0
-        .to(device)
+        .permute(2, 0, 1).unsqueeze(0).float().to(device) / 255.0
     )
     with torch.no_grad():
         out = model(tensor)

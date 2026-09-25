@@ -97,10 +97,11 @@ def track_video(
                 if len(buffer) >= _WARMUP_FRAMES + 1:
                     t = frame_no / fps
                     stack = np.concatenate(buffer[-3:], axis=-1)  # (H, W, 9)
+                    # 注意：.to(dev) 必须写在 / 255.0 之前——否则属性访问优先级
+                    # 更高，会被解析成 255.0.to(dev)（float 无 .to 方法 → AttributeError）
                     tensor = (
                         torch.from_numpy(stack.copy())
-                        .permute(2, 0, 1).unsqueeze(0).float() / 255.0
-                        .to(dev)
+                        .permute(2, 0, 1).unsqueeze(0).float().to(dev) / 255.0
                     )
                     with torch.no_grad():
                         out = model(tensor)

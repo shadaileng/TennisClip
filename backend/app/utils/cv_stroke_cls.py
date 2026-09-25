@@ -220,9 +220,9 @@ def _classify_cnn(video_path: Path, segments: list[Segment], weights: str, devic
         if not frames:
             continue
         arr = np.stack([np.array(f, dtype=np.uint8) for f in frames])  # (T, H, W, C)
+        # .to(dev) 必须在 / 255.0 之前（否则解析为 255.0.to(dev) → float 无 .to）
         tensor = (
-            torch.from_numpy(arr).permute(3, 0, 1, 2).unsqueeze(0).float() / 255.0
-            .to(dev)
+            torch.from_numpy(arr).permute(3, 0, 1, 2).unsqueeze(0).float().to(dev) / 255.0
         )  # (B=1, C, T, H, W)
         with torch.no_grad():
             out = model(tensor)
