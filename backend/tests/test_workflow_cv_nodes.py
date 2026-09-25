@@ -439,6 +439,43 @@ def test_score_node_filters_truncates_and_scores(tmp_path, monkeypatch):
     assert out1["highlight"].segments[0].start == 0
 
 
+def test_score_node_level_all_skips_max_segments_cap(tmp_path, monkeypatch):
+    """ctx.level=all 时不按 max_segments 截断（API 契约「所有高光回合」），min_score 仍生效。"""
+    from app.utils import cv_clip_score
+    from app.workflow.nodes import post_score
+
+    segs = [
+        Segment(start=i * 10, end=i * 10 + 4, label="candidate", confidence=0.9)
+        for i in range(5)
+    ]
+
+    def fake_score(video, windows, **kw):
+        # 4 段过阈值、末段 0.1 低于 min_score
+        return [(s, 0.6 if i < 4 else 0.1) for i, s in enumerate(segs)]
+
+    monkeypatch.setattr(cv_clip_score, "score_windows", fake_score)
+
+    params = {
+        "clip_model": "small", "min_score": 0.25, "max_segments": 3,
+        "highlight_phrases": "x",
+    }
+
+    ctx_all = FakeContext(
+        level="all", video_path=tmp_path / "v.mp4",
+        inputs={"video": tmp_path / "v.mp4", "candidates": segs},
+    )
+    out_all = post_score.run(ctx_all, dict(params))
+    assert len(out_all["highlight"].segments) == 4, "all 档位不应被 max_segments=3 截断"
+
+    ctx_norm = FakeContext(
+        level="intermediate", video_path=tmp_path / "v.mp4",
+        inputs={"video": tmp_path / "v.mp4", "candidates": segs},
+    )
+    out_norm = post_score.run(ctx_norm, dict(params))
+    assert len(out_norm["highlight"].segments) == 3, "非 all 档位仍按 max_segments 截断"
+    assert len(out_norm["highlight"].segments) < len(out_all["highlight"].segments)
+
+
 def test_score_node_missing_candidates_raises_valueerror(tmp_path):
     """score 节点缺必填输入 → 清晰 ValueError。"""
     from app.workflow.nodes import post_score

@@ -59,10 +59,14 @@ def run(ctx, params):
         device=params.get("device", "auto"),
     )
     min_score = params["min_score"]
-    top = [
+    passed = [
         (seg, score) for (seg, score) in scored
         if score >= min_score
-    ][: params["max_segments"]]
+    ]
+    # all 档位（API 契约「所有高光回合」）不做 max_segments 截断，
+    # 仍以 min_score 作质量门槛；非 all 档位按 max_segments 取最高分段
+    all_mode = getattr(ctx, "level", "") == "all"
+    top = passed if all_mode else passed[: params["max_segments"]]
 
     segments = [
         seg.model_copy(update={"confidence": score}) for (seg, score) in top
