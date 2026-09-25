@@ -255,6 +255,7 @@ uv run python -m app.cli --batch data/sample_videos
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
+| GET | `/api/v1/tasks/{task_id}/artifact/{kind}` | 按 kind 下载任务产物（如 `track_overlay` 轨迹可视化视频） |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |
 | GET | `/api/v1/db/providers` | 模型服务商列表（数据库；含 is_selected） |
 | POST | `/api/v1/db/providers/check-models` | 校验模型可用性（list / probe） |

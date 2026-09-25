@@ -7,6 +7,8 @@ backend/data/
 backend/data_test/
 # 测试库（根目录遗留，单独忽略）
 backend/test_roundtrip.db
+# CV 权重文件（ultralytics 自动下载可能落 cwd；正式权重在 backend/data/models/ 已随 data/ 忽略）
+backend/*.pt
 # 测试环境配置（本地用，由 .env.test.example 复制，不入库）
 backend/.env.test
 

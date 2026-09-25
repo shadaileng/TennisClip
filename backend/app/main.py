@@ -486,6 +486,18 @@ def get_video(task_id: str) -> FileResponse:
     return FileResponse(path, filename=path.split("/")[-1])
 
 
+@app.get("/api/v1/tasks/{task_id}/artifact/{kind}")
+def get_artifact(task_id: str, kind: str) -> FileResponse:
+    """按 kind 下载任务产物文件（如 track_overlay 轨迹可视化诊断视频）。
+
+    路径来自 task_outputs 表（节点经 NodeSpec.persists 落库），文件缺失 404。
+    """
+    path = db_service.get_task_output_path(task_id, kind)
+    if not path or not Path(path).is_file():
+        raise HTTPException(status_code=404, detail=f"artifact {kind} not ready")
+    return FileResponse(path, filename=Path(path).name)
+
+
 # ---------- 数据库管理端点（多兼容：SQLite/Postgres/MySQL） ----------
 
 @app.get("/api/v1/db/tasks")

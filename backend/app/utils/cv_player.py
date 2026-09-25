@@ -43,6 +43,46 @@ def _greedy_displacement(prev_centers: list, centers: list, diag: float) -> floa
     return total / diag
 
 
+def load_person_model(model_size: str = "n", weights: str = ""):
+    """加载 YOLOv8 人体检测模型（供 compute_motion_scores / cv_visualize 复用）。
+
+    - 权重本地缺失时由 ultralytics 自动下载，离线环境请预放置权重文件；
+    - 依赖缺失/权重加载失败 → 抛 CvUnavailable（调用节点按 on_failure=skip 降级）；
+    - 设备选择在预测时传入（detect_person_boxes 的 device 参数）。
+    """
+    require("ultralytics")
+    weight_name = weights or _MODEL_SIZES.get(model_size, _MODEL_SIZES["n"])
+    try:
+        from ultralytics import YOLO  # require 成功后才导入
+        return YOLO(weight_name)  # 本地缺失时自动下载，离线会抛错
+    except Exception as exc:  # noqa: BLE001
+        raise CvUnavailable(
+            f"YOLOv8 权重 {weight_name} 加载失败（{exc}）；"
+            f"请联网首次下载或预放置到运行目录"
+        ) from exc
+
+
+def detect_person_boxes(
+    model, frame, device: str = "cpu", conf: float = _DET_CONF
+) -> list[tuple[float, float, float, float, float]]:
+    """单帧人体检测 → ``[(x1, y1, x2, y2, conf)]``（无检测返回空列表）。"""
+    try:
+        det = model.predict(
+            frame, verbose=False, classes=[_PERSON_CLASS], conf=conf, device=device
+        )[0]
+    except Exception as exc:  # noqa: BLE001
+        raise CvUnavailable(f"YOLOv8 推理失败：{exc}") from exc
+    boxes = getattr(det, "boxes", None)
+    if boxes is None or len(boxes) == 0:
+        return []
+    xyxy = boxes.xyxy.cpu().numpy()
+    confs = boxes.conf.cpu().numpy()
+    return [
+        (float(x1), float(y1), float(x2), float(y2), float(c))
+        for (x1, y1, x2, y2), c in zip(xyxy, confs)
+    ]
+
+
 def compute_motion_scores(
     video_path: Path,
     duration: float,
@@ -62,20 +102,11 @@ def compute_motion_scores(
     require("ultralytics")
     np = require("numpy")
     cv2 = require("cv2")
-    from ultralytics import YOLO  # require 成功后才导入
 
     # device 语义对齐 torch：auto=有 CUDA 用 CUDA 否则 CPU（ultralytics 默认即此行为，
     # 但显式传入保证跨版本一致 + cpu 可强制回退）
-    import torch
     dev = ensure_device(device)
-    weight_name = weights or _MODEL_SIZES.get(model_size, _MODEL_SIZES["n"])
-    try:
-        model = YOLO(weight_name)  # 本地缺失时自动下载，离线会抛错
-    except Exception as exc:  # noqa: BLE001
-        raise CvUnavailable(
-            f"YOLOv8 权重 {weight_name} 加载失败（{exc}）；"
-            f"请联网首次下载或预放置到运行目录"
-        ) from exc
+    model = load_person_model(model_size=model_size, weights=weights)
     if duration <= 0:
         return [], 1.0
 
@@ -98,17 +129,11 @@ def compute_motion_scores(
             if frame_no % frame_stride == 0:
                 h, w = frame.shape[:2]
                 diag = (w * w + h * h) ** 0.5
-                try:
-                    det = model.predict(frame, verbose=False, classes=[_PERSON_CLASS],
-                                         conf=_DET_CONF, device=dev)[0]
-                except Exception as exc:  # noqa: BLE001
-                    raise CvUnavailable(f"YOLOv8 推理失败：{exc}") from exc
-                boxes = getattr(det, "boxes", None)
-                centers = []
-                if boxes is not None and len(boxes) > 0:
-                    xyxy = boxes.xyxy.cpu().numpy()
-                    for (x1, y1, x2, y2) in xyxy:
-                        centers.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0))
+                det_boxes = detect_person_boxes(model, frame, device=dev)
+                centers = [
+                    ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+                    for (x1, y1, x2, y2, _c) in det_boxes
+                ]
                 scores.append(round(_greedy_displacement(prev_centers, centers, diag), 5))
                 prev_centers = centers
                 if max_frames and len(scores) >= max_frames:

@@ -27,7 +27,7 @@ TennisClip/
 │   │   │   ├── graph.py      # 图结构：节点 + 边 + 校验（R1~R10）+ Kahn 拓扑排序
 │   │   │   ├── executor.py   # 执行器：Kahn 分层并行 + Context 传值 + 声明式落库 + 产物投影
 │   │   │   ├── presets.py    # 预置编译器：compile_from_legacy / compile_from_config
-│   │   │   └── nodes/        # 15 个内置节点（input.video / preprocess.transcode / ...）
+│   │   │   └── nodes/        # 16 个内置节点（input.video / preprocess.transcode / ...）
 │   │   └── utils/            # ffmpeg / llm / tasks / logger / media_strategies（视频理解策略）/ cv_*（CV 感知层薄封装）
 │   ├── alembic/              # 数据库迁移（env.py + versions/*.py，迁移脚本入库）
 │   ├── alembic.ini           # Alembic 配置（连接串由 env.py 动态解析，不写死）
@@ -105,6 +105,7 @@ TennisClip/
 | POST | `/api/v1/tasks/{task_id}/retry` | 重试终态任务（失败/被停止）：按原 level + 输入视频 MD5 秒传重新提交，返回 `{retried_from, task_id, status}`；非终态任务 409、输入不可用 400、任务不存在 404；管线配置按提交时刻解析（与 `/api/v1/process` 一致） |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
+| GET | `/api/v1/tasks/{task_id}/artifact/{kind}` | 按 kind 下载任务产物文件（如 `track_overlay` 轨迹可视化诊断视频，来源 task_outputs 落库，缺失 404） |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |
 | GET | `/api/v1/db/tasks/{task_id}` | 单任务完整结果（从数据库重建：highlight/report JSON + 文件路径，历史查看不依赖内存队列） |
 | GET | `/api/v1/db/providers` | 模型服务商列表（数据库；字段 id/name/base_url/**api_key(掩码)**/models/default_model/enabled/sort_order/is_selected） |
@@ -138,7 +139,7 @@ TennisClip/
   - **图结构**（`graph.py`）：`WorkflowGraph` 含节点列表 + 有向边 + 校验（R1~R10 十项规则）+ Kahn 拓扑排序；`frozen` 属性锁定预置图。
   - **执行器**（`executor.py`）：`Context` 传值 + stage 上报 + 产物投影（`output.artifact` 节点写回 `TaskResult`）。**分层并行（批次 C1）**：按 `graph.topo_levels()` Kahn 分层调度——准备（解析输入/级联判定/参数/节点级 config 深拷贝）与收尾（store/声明式落库/状态）在主线程按层内 node.id 升序执行（确定性）；同层节点按 `spec.stage` 分组，组间串行（`result.stage` 标量阶段上报顺序确定）、组内同阶段节点线程池并行（`detect.*` 同为 detecting 等），单节点组内联执行保持链式图串行语义；并行执行期无并发 DB 写（落库集中在收尾主线程）。
   - **预置编译器**（`presets.py`）：`compile_from_legacy(stages, strategy, level)` 将旧管线三元组编译为 `WorkflowGraph`；`compile_from_config(db, config)` 读取配置 KV 后委托编译。编译产出的图 `frozen=True`，禁止修改。
-  - **15 个内置节点**：`input.video`（视频输入）、`preprocess.transcode`（预处理转码）、`detect.candidates`（信号候选定位）、`analyze.highlight`（LLM 高光识别）、`post.filter_segments`（片段过滤）、`post.uniform_slices`（均匀切片兜底）、`edit.concat`（剪辑合成）、`report.technical`（技术分析报告）、`output.artifact`（产物投影），以及 CV 感知层 6 节点（方案 12 · Step 2）：`detect.tracknet`（TrackNet 球追踪，track+candidates 双输出）、`detect.court`（球场 14 关键点）、`detect.player`（YOLOv8 球员运动分数→候选）、`detect.pose`（MediaPipe 姿态）、`post.score_highlights`（CLIP 零样本评分，脱离 LLM 产出 highlight）、`post.classify_strokes`（击球分类 cnn/dtw，pose 输入可选）。
+  - **16 个内置节点**：`input.video`（视频输入）、`preprocess.transcode`（预处理转码）、`detect.candidates`（信号候选定位）、`analyze.highlight`（LLM 高光识别）、`post.filter_segments`（片段过滤）、`post.uniform_slices`（均匀切片兜底）、`edit.concat`（剪辑合成）、`report.technical`（技术分析报告）、`output.artifact`（产物投影），以及 CV 感知层 6 节点（方案 12 · Step 2）：`detect.tracknet`（TrackNet 球追踪，track+candidates 双输出）、`detect.court`（球场 14 关键点）、`detect.player`（YOLOv8 球员运动分数→候选）、`detect.pose`（MediaPipe 姿态）、`post.score_highlights`（CLIP 零样本评分，脱离 LLM 产出 highlight）、`post.classify_strokes`（击球分类 cnn/dtw，pose 输入可选），以及 `post.visualize_track`（轨迹可视化诊断：球轨迹折线 + 球员框 + 检出时间线叠加视频，多球轨迹按 tracklet 分段配色、静止球灰标，产物 kind=`track_overlay`，on_failure=skip）。
   - **CV 感知层契约**：推理薄封装在 `app/utils/cv_*.py`（共享运行时 `cv_runtime.py`），候选聚合复用 `event_detect.track_to_candidates`/`scores_to_candidates`（与旧信号同一套聚类）；依赖/权重缺失抛 `CvUnavailable`，**4 个 detect 节点 `on_failure="skip"` 级联降级、2 个 post 节点保持 fail**；依赖组 `uv sync --extra cv`（torch/ultralytics/mediapipe/transformers），权重放 `backend/data/models/`（gitignore 忽略）；**一键获取转换**：`backend/scripts/fetch_tracknet_weights.py`（HF 源下载 → 契约适配 → TorchScript 导出落盘）；模块级导入零重依赖，无 CV 环境节点注册与 schema 照常工作。
   - **持久化**：`workflows` 表（name/graph_json/is_builtin/enabled），Alembic 迁移；`workflow_service.py` CRUD + 激活 + 种子。内置工作流（`is_builtin=1`）不可删除/修改。**种子**（`seed_builtin_presets`，`main.py` 启动接线、失败仅告警不阻断）：「默认工作流」按全表 `count==0` 门控、「CV 增强工作流」（方案 12 · 5.2，示例 C 降本链路：TrackNet 候选 → CLIP 初筛 → 剪辑/报告，无 analyze 节点）按名幂等缺则补、存量库也生效。
 - **任务重启恢复（僵尸任务修复）**：`main.py` 启动钩子（`init_db` 之后、环境自检之前）扫描 DB 非终态任务（pending/processing/timeout）——`db_service.recover_stale_tasks()` 从 `task_outputs`（kind=uploaded）反解输入 MD5，`uploaded_videos` 反查物理路径：文件仍在 → 保留原 task_id/level 经 `queue.submit` 重新入队续跑（预处理输出已落盘，仅重做 LLM/CV 推理）；文件缺失/未登记 → `mark_task_failed` 标记 failed 附中断原因。恢复块仅告警不阻断启动，单任务失败不影响其他任务（`tests/test_task_recovery.py` 覆盖 7 用例）。

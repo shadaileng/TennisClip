@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.23.0] - 2026-09-25
+
+### Added
+
+- 轨迹可视化诊断节点与多球轨迹分段（v0.23.0）：新增 `post.visualize_track`（category=post、on_failure=skip、persists=`track_overlay`）——渲染球轨迹折线（青/品红/黄/蓝轮换）、当前帧检出标记、球员检测框（YOLO `show_players` 可关）、HUD 统计与底部检出时间线，空轨迹仍渲染（全红时间线=TrackNet 未检出的诊断证据），接线 `detect.tracknet`.track + `preprocess.transcode`.video/duration；新端点 `GET /api/v1/tasks/{task_id}/artifact/{kind}` 按 kind 下载任务产物（缺失 404，`db_service.get_task_output_path` 查 task_outputs）；多球区分——TrackNet 每帧热图仅 argmax 单点、场上多球时峰值帧间跳变致折线穿场，`cv_visualize.split_tracklets` 按物理连续性分段（Δt>`break_gap` 0.5s 或隐含速度>`max_speed` 10000px/s 断线）、段配色轮换、静止球段（≥3s 原地不动）灰标 `static?`、命中标记带段号 `ball#N`，两参数入节点 Schema（0.1~3.0s / 1000~60000px/s）；`cv_player` 抽出 `load_person_model`/`detect_person_boxes` 公共函数（`compute_motion_scores` 复用、行为不变）；忽略 `backend/*.pt` 权重落盘；新增 `tests/test_visualize_track.py` 14 用例（分段规则全分支/静止判定边界/三球真实渲染冒烟），全量 382 测试通过；同步 AGENTS.md 与 README
+
 ## [0.22.0] - 2026-09-25
 
 ### Added

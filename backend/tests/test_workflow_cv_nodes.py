@@ -88,13 +88,13 @@ def _example_c_dict() -> dict:
     }
 
 
-# ---------- 2.11: schema 返回 15 个内置节点 ----------
+# ---------- 2.11: schema 返回 16 个内置节点 ----------
 
-def test_schema_has_15_builtin_nodes():
-    """内置节点共 15 个（9 旧 + 6 新），新节点全部在目录中。"""
+def test_schema_has_16_builtin_nodes():
+    """内置节点共 16 个（9 旧 + 6 CV + 1 可视化），新节点全部在目录中。"""
     schema = _builtin_schema()
     types = {n["type"] for n in schema}
-    assert len(schema) == 15, f"期望 15 个内置节点，实际 {len(schema)}"
+    assert len(schema) == 16, f"期望 16 个内置节点，实际 {len(schema)}"
     assert set(NEW_NODE_TYPES) <= types
 
 

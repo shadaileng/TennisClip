@@ -331,6 +331,25 @@ def record_task_output(task_id: str, kind: str, file_path: str, size_mb: float, 
         logger.warning("db: record_task_output failed: {}", exc)
 
 
+def get_task_output_path(task_id: str, kind: str) -> Optional[str]:
+    """按 outputs.kind 定位任务产物文件路径（如 track_overlay），不存在/异常返回 None。
+
+    供任意 kind 的产物下载端点使用（highlight_video/report 另有专用路径字段）。
+    """
+    try:
+        with session() as s:
+            row = (
+                s.query(TaskOutput)
+                .filter(TaskOutput.task_id == task_id, TaskOutput.kind == kind)
+                .order_by(TaskOutput.id.desc())
+                .first()
+            )
+            return row.file_path if row else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("db: get_task_output_path failed: {}", exc)
+        return None
+
+
 def mark_file_removed(file_path: str, task_id: Optional[str] = None) -> None:
     """文件管理：标记某文件已删除。"""
     try:
