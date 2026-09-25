@@ -453,6 +453,18 @@ export const useTaskStore = defineStore('task', {
       }
     },
 
+    // 停止任务（协作式取消：下一个检查点生效）。支持指定 task_id（历史面板）或停当前任务
+    async stopTask(taskId = '') {
+      const target = taskId || this.current?.task_id
+      if (!target) return
+      if (this.current && this.current.task_id === target && TERMINAL_STATES.includes(this.current.status)) return
+      try {
+        await api.stopTask(target)
+      } catch (e) {
+        this.error = `停止任务 ${target} 失败：${e.message || e}`
+      }
+    },
+
     clear() {
       this._stopPolling()
       this.current = null

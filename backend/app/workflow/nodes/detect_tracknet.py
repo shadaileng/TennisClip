@@ -62,6 +62,7 @@ def run(ctx, params):
         video, float(duration),
         confidence=params["confidence"],
         frame_stride=params["frame_stride"],
+        task_id=getattr(ctx, "task_id", ""),
     )
     effective_top_n = None if params["top_n"] == 0 else params["top_n"]
     candidates = event_detect.track_to_candidates(

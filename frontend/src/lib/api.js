@@ -120,6 +120,14 @@ export const api = {
     return parse(res)
   },
 
+  // 停止任务（协作式取消，下一个检查点生效）
+  async stopTask(taskId) {
+    const res = await fetch(url(`/api/v1/tasks/${encodeURIComponent(taskId)}/stop`), {
+      method: 'POST',
+    })
+    return parse(res)
+  },
+
   reportUrl(taskId) {
     return url(`/api/v1/tasks/${encodeURIComponent(taskId)}/report`)
   },

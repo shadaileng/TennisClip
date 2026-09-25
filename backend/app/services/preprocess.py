@@ -52,5 +52,15 @@ def preprocess(video_path: Path, config: AppConfig, work_dir: Optional[Path] = N
         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
         "-c:a", "aac", "-b:a", "128k",
         str(target),
-    ])
+    ], task_id=_resolve_task_id(work_dir), label="preprocess.transcode")
     return target
+
+
+def _resolve_task_id(work_dir) -> str:
+    """从 work_dir（outputs/{task_id}）反解 task_id，供 ffmpeg 取消检查点使用。"""
+    if work_dir and work_dir.name:
+        import re
+        m = re.match(r"^[0-9a-f]{12}$", work_dir.name)
+        if m:
+            return m.group(0)
+    return ""

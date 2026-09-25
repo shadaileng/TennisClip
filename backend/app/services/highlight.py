@@ -50,6 +50,7 @@ def find_highlights(
     model: Optional[str] = None,
     candidates: Optional[list] = _NO_CANDIDATES,
     prompt_variant: str = "standard",
+    task_id: str = "",
 ) -> HighlightResult:
     """识别高光回合，返回结构化时间戳。
 
@@ -112,6 +113,7 @@ def find_highlights(
         candidates=prompt_cands,
         analysis_mode=analysis_mode,
         model_override=model,
+        task_id=task_id,
     )
     if result is None:
         raise RuntimeError("LLM 未返回结构化结果")
@@ -134,6 +136,7 @@ def find_highlights(
             schema_hint="HighlightResult",
             candidates=prompt_cands,
             analysis_mode=analysis_mode,
+            task_id=task_id,
         )
         if result2:
             _lift_scene_fields(result2)

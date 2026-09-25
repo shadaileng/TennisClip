@@ -369,6 +369,31 @@ def get_task(task_id: str) -> dict:
     raise HTTPException(status_code=404, detail="task not found")
 
 
+@app.post("/api/v1/tasks/{task_id}/stop")
+def stop_task(task_id: str) -> dict:
+    """停止处理任务（协作式取消）。
+
+    - 任务在内存队列（pending/processing）：标记取消旗标，执行器在下一个检查点
+      （节点边界 / ffmpeg 前 / 逐帧前 / LLM 前）抛出 TaskCancelled → failed。
+      正在跑的子进程（ffmpeg/torch）无法硬中断，最迟当前帧/调用返回后停止。
+    - 任务已终态 / 不存在于本进程：返回 stopped=false，调用方无需重试。
+    返回 {task_id, stopped, reason}。
+    """
+    from app.utils import cancel
+
+    # 任务必须存在于内存队列才可能标记取消（已终态/重启后任务已不在本进程）
+    try:
+        result = queue.get(task_id)
+    except KeyError:
+        return {"task_id": task_id, "stopped": False, "reason": "task not in this process (terminal or restarted)"}
+
+    if result.status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
+        return {"task_id": task_id, "stopped": False, "reason": f"already terminal ({result.status.value})"}
+
+    cancel.cancel_task(task_id)
+    return {"task_id": task_id, "stopped": True, "reason": "cancel flag set, will stop at next checkpoint"}
+
+
 @app.get("/api/v1/tasks/{task_id}/report")
 def get_report(task_id: str) -> FileResponse:
     path = _resolve_file_path(task_id, "report")

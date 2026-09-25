@@ -28,6 +28,7 @@ except ImportError:  # 允许仅 Mock 模式运行
 
 from app.config import AppConfig
 from app.models import HighlightResult, TechnicalReport
+from app.utils import cancel
 from app.utils.logger import get_logger
 from app.utils.media_strategies import get_strategy
 
@@ -186,12 +187,17 @@ def complete_structured(
     candidates=None,
     analysis_mode: Optional[str] = None,
     model_override: Optional[str] = None,
+    task_id: str = "",
 ) -> Optional[dict]:
     """按 OpenAI Chat Completions 格式发送 Prompt（含视频媒体引用），返回解析后的结构化 dict。
 
     candidates: 信号定位的候选窗口（Segment 列表），用于抽帧段内定位与视频模式软提示。
     analysis_mode: 媒体输入策略（frame=抽帧 / video=视频理解）；空则取 config.llm.analysis_mode。
+    task_id: 协作式取消检查点（非空时），LLM HTTP 请求无法外部中断，取消语义为
+      「当前请求返回后立即停止、不再进入重试/下一节点」；调用前也做一次检测。
     """
+    if task_id:
+        cancel.check_cancelled(task_id, "llm 调用前")
     provider, api_key = _resolve_provider(config)
     if model_override:
         # 支持 "provider_name/model_id" 格式：动态切换到指定服务商
@@ -276,6 +282,8 @@ def complete_structured(
     parsed = None
     video_retries = 2  # StepFun 视频解码瞬时失败（video_exception/conn closed）的重试次数
     for v_attempt in range(video_retries + 1):
+        if task_id:
+            cancel.check_cancelled(task_id, "llm 重试边界")
         try:
             response = client.chat.completions.create(
                 model=provider.model,

@@ -15,7 +15,6 @@ from pathlib import Path
 
 from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights
 from app.utils.logger import get_logger
-
 logger = get_logger(__name__)
 
 DEFAULT_WEIGHTS = "tracknet.pth"
@@ -46,11 +45,14 @@ def track_video(
     frame_stride: int = 1,
     weights: str = "",
     max_frames: int = 0,
+    task_id: str = "",
 ) -> list[dict]:
     """逐帧推理网球位置，返回按时间升序的轨迹点列表。
 
     - frame_stride：每 N 帧取 1 帧（降 GPU 负载），时间戳按真实帧号换算；
     - max_frames：调试用帧数上限（0=不限）；
+    - task_id：协作式取消检查点——每个采样帧前检测旗标，命中即抛 TaskCancelled
+      （torch 推理无法外部硬中断，取消语义为「当前帧跑完即止、不再进入下一帧」）；
     - 依赖 torch/opencv、权重缺失 → 抛 CvUnavailable（节点 on_failure=skip 降级）。
     """
     torch = require("torch")
@@ -78,6 +80,10 @@ def track_video(
             if not ok:
                 break
             if frame_no % max(1, frame_stride) == 0:
+                # 协作式取消检查点：每个采样帧前检测，命中即抛 TaskCancelled
+                if task_id:
+                    from app.utils import cancel
+                    cancel.check_cancelled(task_id, f"tracknet 帧 {frame_no}")
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 buffer.append(rgb)
                 if len(buffer) >= _WARMUP_FRAMES + 1:

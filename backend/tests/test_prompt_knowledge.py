@@ -197,7 +197,7 @@ def test_analyze_highlight透传_prompt_variant(tmp_path, monkeypatch):
     captured = {}
 
     def fake_highlights(video, config, duration, level="intermediate", analysis_mode=None,
-                        model=None, candidates=None, prompt_variant="standard"):
+                        model=None, candidates=None, prompt_variant="standard", task_id=""):
         captured["prompt_variant"] = prompt_variant
         return HighlightResult(segments=[], scene_type="match")
 
@@ -218,7 +218,7 @@ def test_report_technical透传_knowledge_level(tmp_path, monkeypatch):
     captured = {}
 
     def fake_report(video, highlight, config, level="intermediate", out_path=None,
-                    knowledge_level="standard"):
+                    knowledge_level="standard", task_id=""):
         captured["knowledge_level"] = knowledge_level
         return TechnicalReport(level=level, summary="stub")
 

@@ -156,7 +156,15 @@ watch(() => store.showHistory, (v) => {
             <span>{{ LEVEL_LABELS[task.level] || task.level }}</span>
             <span>耗时 {{ fmtDuration(task.elapsed_seconds) }}</span>
             <span v-if="isRunning(task)" class="text-blue-400">进行中 · 点击查看实时进度</span>
-            <span v-else-if="task.error" class="truncate text-red-400">{{ task.error }}</span>
+              <button
+                v-if="isRunning(task)"
+                type="button"
+                class="rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-300 transition hover:border-red-400 hover:bg-red-500/20"
+                @click.stop="store.stopTask(task.task_id)"
+              >
+                停止
+              </button>
+              <span v-if="!isRunning(task) && task.error" class="truncate text-red-400">{{ task.error }}</span>
           </div>
         </li>
       </ul>

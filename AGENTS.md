@@ -99,6 +99,7 @@ TennisClip/
 | GET | `/api/v1/upload/chunks` | 查询分片进度（`ok/failed/missing`），断点续传依据 |
 | POST | `/api/v1/upload/complete` | 分片合并校验（整文件 MD5/size 二次校验防篡改），迁入 `{md5}{ext}` 并落 `uploaded_videos` 表，返回 `{md5, rel_path, ext, original_name}` |
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
+| POST | `/api/v1/tasks/{task_id}/stop` | 停止处理任务（协作式取消：置取消旗标，执行器在下一检查点——节点边界/ffmpeg 前/逐帧前/LLM 调用前——抛 `TaskCancelled` 走 failed 分支；任务须在本进程内存队列，终态/重启后任务返回 `stopped:false`） |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |

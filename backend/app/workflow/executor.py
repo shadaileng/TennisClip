@@ -31,6 +31,7 @@ from typing import Any, Optional
 from app.config import AppConfig
 from app.models import TaskResult, TaskStatus, WorkflowNodeProgress
 from app.services import db_service
+from app.utils import cancel
 from app.utils.logger import get_logger
 from app.workflow.graph import WorkflowGraph
 from app.workflow.spec import get_fn, get_spec, resolve_params, validate_port_value
@@ -193,6 +194,11 @@ class Executor:
             skipped: list[str] = []
 
             for level in levels:
+                # ---- 节点边界取消检查点（批次 C1）----
+                # 用户停止任务：在进入下一层前检测旗标，命中即抛 TaskCancelled，
+                # 走下方失败分支（record_task_finish 落库 failed，重启不会复活）。
+                cancel.check_cancelled(task_id, "workflow 节点边界")
+
                 # ---- 准备阶段（主线程串行，层内 id 升序）----
                 runnable: list[tuple] = []  # (node_id, spec, fn, params, node_ctx, idx)
                 for node_id in level:
@@ -335,6 +341,12 @@ class Executor:
             self.result.elapsed_seconds = time.monotonic() - started
             logger.info("workflow: done in {:.1f}s", self.result.elapsed_seconds)
 
+        except cancel.TaskCancelled as exc:
+            # 用户显式停止：走 failed 分支但给出明确原因，避免误读为系统故障
+            self.result.status = TaskStatus.FAILED
+            self.result.error = f"任务已被用户停止（{task_id}）"
+            self.result.elapsed_seconds = time.monotonic() - started
+            logger.info("workflow: 任务 {} 被用户停止", task_id)
         except Exception as exc:
             self.result.status = TaskStatus.FAILED
             self.result.error = str(exc)
@@ -351,5 +363,7 @@ class Executor:
             report_json=self.result.report.model_dump() if self.result.report else None,
             generated_by=self.result.report.generated_by if self.result.report else "",
         )
+        # 任务已终态：清除取消旗标（避免内存泄漏；已 failed 不会复活）
+        cancel.clear_cancelled(task_id)
 
         return self.result

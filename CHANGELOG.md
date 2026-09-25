@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.20.0] - 2026-09-25
+
+### Added
+
+- 任务停止功能（协作式取消）：新增 `app/utils/cancel.py`（模块级取消旗标 + `TaskCancelled` 异常 + `check_cancelled` 检查点）；`POST /api/v1/tasks/{task_id}/stop` 标记取消旗标（任务需在本进程内存队列，终态/重启后任务返回 stopped=false）；检查点接入——executor 每层节点边界、`ffmpeg.run`（task_id 参数，调用前检测）、`cv_tracknet.track_video` 逐采样帧前、`llm.complete_structured`（调用前 + 视频重试边界）、`highlight.find_highlights`/`report.generate_report` 透传 task_id；executor 捕获 `TaskCancelled` 走 failed 分支（error 注明「已被用户停止」）、落库后清除旗标；取消语义为「当前检查点后停止」——ffmpeg 子进程/torch 推理/LLM HTTP 无法外部硬中断，最迟当前帧/请求返回后停止；前端 TaskCard「⏹ 停止」按钮 + TaskHistory 进行中行「停止」按钮 + `api.stopTask` + store `stopTask(taskId?)`；新增 `tests/test_cancel.py` 5 用例，全量 289 测试通过
+
 ## [0.19.1] - 2026-09-24
 
 ### Fixed

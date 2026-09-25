@@ -62,6 +62,7 @@ def run(ctx, params):
     hl = highlight_service.find_highlights(
         video, config, float(duration), level=level, analysis_mode=analysis_mode, model=model,
         candidates=candidates, prompt_variant=prompt_variant,
+        task_id=getattr(ctx, "task_id", ""),
     )
 
     return {"highlight": hl}

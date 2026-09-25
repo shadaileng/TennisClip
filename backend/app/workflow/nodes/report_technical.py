@@ -64,6 +64,7 @@ def run(ctx, params):
     tech_report = report.generate_report(
         video, highlight, config, level=level, out_path=report_file,
         knowledge_level=knowledge_level,
+        task_id=getattr(ctx, "task_id", ""),
     )
 
     # 批次 C2：产物落库由执行器按 persists=("report","report") 统一执行

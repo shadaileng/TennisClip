@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from app.utils import cancel
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,14 +24,26 @@ def is_available() -> bool:
     return _available
 
 
-def run(cmd: list[str], timeout: int = 300, capture_stderr: bool = False, binary: bool = False) -> "str | bytes":
+def run(
+    cmd: list[str],
+    timeout: int = 300,
+    capture_stderr: bool = False,
+    binary: bool = False,
+    task_id: str = "",
+    label: str = "",
+) -> "str | bytes":
     """执行命令，失败时抛 RuntimeError。
 
     capture_stderr: 返回 stderr 而非 stdout（如 showinfo 元数据打印到 stderr）。
     binary: 以二进制模式捕获（如 rawvideo 帧流），返回 bytes。
+    task_id/label: 协作式取消检查点——调用前检测旗标（命中即抛 TaskCancelled，
+    不进入 ffmpeg 转码）；ffmpeg 子进程无法外部硬中断，取消语义为「本次转码跑完
+    即止、不再进入后续检查点」。
     """
     if not is_available():
         raise RuntimeError("FFMPEG 未安装或不在 PATH 中")
+    if task_id:
+        cancel.check_cancelled(task_id, f"ffmpeg {label or cmd[0]}")
     logger.debug("exec: {}", " ".join(cmd))
     proc = subprocess.run(
         cmd,

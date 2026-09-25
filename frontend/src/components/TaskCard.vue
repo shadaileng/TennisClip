@@ -103,13 +103,22 @@ function nodeConnectorClass(s) {
   <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
     <div class="mb-4 flex items-center justify-between">
       <h2 class="text-base font-semibold text-slate-100">处理任务</h2>
-      <button
-        v-if="task"
-        class="text-xs text-slate-400 hover:text-slate-200"
-        @click="emit('clear')"
-      >
-        清除
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          v-if="task && !isTerminal"
+          class="rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition hover:border-red-400 hover:bg-red-500/20 hover:text-red-200"
+          @click="store.stopTask()"
+        >
+          ⏹ 停止
+        </button>
+        <button
+          v-if="task"
+          class="text-xs text-slate-400 hover:text-slate-200"
+          @click="emit('clear')"
+        >
+          清除
+        </button>
+      </div>
     </div>
 
     <p v-if="!task" class="py-10 text-center text-sm text-slate-500">
