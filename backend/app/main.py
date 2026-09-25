@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from pathlib import Path
@@ -260,6 +261,23 @@ def health() -> dict:
             for name, result in app.state.environment_checks.items()
         },
     }
+
+
+@app.get("/api/v1/system/stats")
+def system_stats() -> dict:
+    """运行时资源统计：CPU / 内存 / 任务队列 / GPU（非 Linux 平台部分字段返回 None）。
+
+    供前端 ResourcePanel 轮询展示实时数据。
+    """
+    from app.utils.system_stats import get_system_stats
+
+    running = sum(
+        1 for t in queue.get_task_statuses() if t.status == TaskStatus.PROCESSING
+    )
+    queued = sum(
+        1 for t in queue.get_task_statuses() if t.status == TaskStatus.PENDING
+    )
+    return get_system_stats(running_tasks=running, queued_tasks=queued, pid=os.getpid())
 
 
 @app.post("/api/v1/process")

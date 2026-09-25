@@ -3,6 +3,7 @@ import { onMounted, onBeforeUnmount } from 'vue'
 import { useTaskStore } from './stores/task'
 import { useWorkflowStore } from './stores/workflow'
 import HealthBar from './components/HealthBar.vue'
+import ResourcePanel from './components/ResourcePanel.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import TaskCard from './components/TaskCard.vue'
 import ProviderManageModal from './components/ProviderManageModal.vue'
@@ -74,7 +75,8 @@ function onUnload() {
         :has-task="!!store.current"
         @submit="(file, level) => store.submit(file, level)"
       />
-      <div>
+      <div class="space-y-4">
+        <ResourcePanel />
         <TaskCard
           :task="store.current"
           :error="store.error"
