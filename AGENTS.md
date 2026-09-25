@@ -100,6 +100,7 @@ TennisClip/
 | POST | `/api/v1/upload/complete` | 分片合并校验（整文件 MD5/size 二次校验防篡改），迁入 `{md5}{ext}` 并落 `uploaded_videos` 表，返回 `{md5, rel_path, ext, original_name}` |
 | GET | `/api/v1/tasks/{task_id}` | 查询任务状态与结果 |
 | POST | `/api/v1/tasks/{task_id}/stop` | 停止处理任务（协作式取消：置取消旗标，执行器在下一检查点——节点边界/ffmpeg 前/逐帧前/LLM 调用前——抛 `TaskCancelled` 走 failed 分支；任务须在本进程内存队列，终态/重启后任务返回 `stopped:false`） |
+| POST | `/api/v1/tasks/{task_id}/retry` | 重试终态任务（失败/被停止）：按原 level + 输入视频 MD5 秒传重新提交，返回 `{retried_from, task_id, status}`；非终态任务 409、输入不可用 400、任务不存在 404；管线配置按提交时刻解析（与 `/api/v1/process` 一致） |
 | GET | `/api/v1/tasks/{task_id}/report` | 下载 JSON 报告 |
 | GET | `/api/v1/tasks/{task_id}/video` | 下载高光集锦视频 |
 | GET | `/api/v1/db/tasks` | 任务历史（数据库审计，`?limit=50`） |

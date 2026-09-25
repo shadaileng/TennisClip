@@ -4,6 +4,12 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.21.0] - 2026-09-25
+
+### Added
+
+- 终态任务重试功能：`POST /api/v1/tasks/{task_id}/retry`（失败/被停止/超时任务按原 level + 输入视频 MD5 秒传重新提交，返回 `{retried_from, task_id, status}`；非终态 409、输入不可用 400、任务不存在 404；管线配置按提交时刻解析）；`get_task_detail` 返回值新增 `level` 字段（重试按原层级提交的依据）；前端 TaskCard 失败/超时卡片「↻ 重试」按钮 + TaskHistory 失败行「重试」按钮 + `api.retryTask` + store `retryTask(taskId?)`（成功后接入新任务轮询并刷新历史列表）；新增 `tests/test_retry_task.py` 6 用例，全量 295 测试通过
+
 ## [0.20.0] - 2026-09-25
 
 ### Added

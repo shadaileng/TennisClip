@@ -164,6 +164,14 @@ watch(() => store.showHistory, (v) => {
               >
                 停止
               </button>
+              <button
+                v-else-if="task.status === 'failed'"
+                type="button"
+                class="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/20"
+                @click.stop="store.retryTask(task.task_id)"
+              >
+                重试
+              </button>
               <span v-if="!isRunning(task) && task.error" class="truncate text-red-400">{{ task.error }}</span>
           </div>
         </li>

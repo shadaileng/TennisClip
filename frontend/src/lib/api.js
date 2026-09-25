@@ -128,6 +128,14 @@ export const api = {
     return parse(res)
   },
 
+  // 重试终态任务（失败/被停止）：按原 level + 输入 MD5 重新提交，返回新任务
+  async retryTask(taskId) {
+    const res = await fetch(url(`/api/v1/tasks/${encodeURIComponent(taskId)}/retry`), {
+      method: 'POST',
+    })
+    return parse(res)
+  },
+
   reportUrl(taskId) {
     return url(`/api/v1/tasks/${encodeURIComponent(taskId)}/report`)
   },

@@ -394,6 +394,69 @@ def stop_task(task_id: str) -> dict:
     return {"task_id": task_id, "stopped": True, "reason": "cancel flag set, will stop at next checkpoint"}
 
 
+@app.post("/api/v1/tasks/{task_id}/retry")
+def retry_task(task_id: str) -> dict:
+    """重试终态任务（失败/被用户停止）：按原 level + 输入视频 MD5 秒传重新提交，返回新任务。
+
+    - 仅允许终态任务（succeeded/failed/timeout）；进行中任务返回 409。
+    - 输入视频不可用（未登记/物理缺失）→ 400 提示重新上传。
+    - 新任务使用全新 task_id，经同一 MD5 秒传链路复用已落盘文件；
+      管线配置按提交时刻解析（与 /api/v1/process 一致）。
+    """
+    from app.services import config_service
+    from app.utils import cancel as _cancel
+
+    # 原任务须存在于 DB（历史任务）
+    detail = db_service.get_task_detail(task_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    # 终态校验：进行中任务（本进程或 DB 非终态）不允许重试
+    if detail.get("status") not in ("succeeded", "failed", "timeout"):
+        raise HTTPException(status_code=409, detail=f"task is {detail.get('status')}, retry not allowed")
+
+    # 输入视频定位（与启动恢复钩子同一反解逻辑）
+    md5, _ = db_service._resolve_input_md5(task_id)
+    video_path = None
+    size_mb = 0.0
+    if md5:
+        with db_service.session() as s:
+            rec = upload_service.find_by_md5(s, md5)
+            if rec is not None and upload_service.exists_physically(config, rec):
+                video_path = config.data_path / rec.rel_path
+                size_mb = rec.size_bytes / (1024 * 1024)
+    if video_path is None:
+        raise HTTPException(status_code=400, detail="原输入视频不可用（未登记或文件缺失），请重新上传")
+
+    level = detail.get("level") or "intermediate"
+    if level not in _VALID_LEVELS:
+        level = "intermediate"
+
+    # 提交时刻解析管线配置（DB 覆盖 > 默认值），与 /api/v1/process 一致
+    with db_service.session() as s:
+        pipeline_cfg = config_service.get_pipeline_config(s, config)
+
+    new_task_id = uuid.uuid4().hex[:12]
+
+    # 落库：新任务的上传文件记录（同 MD5 秒传复用）
+    db_service.record_task_output(new_task_id, "uploaded", str(video_path), size_mb)
+
+    queue.submit(
+        lambda r: _process_one(
+            video_path, new_task_id, level, result=r,
+            analysis_mode=pipeline_cfg["highlight_strategy"],
+            enabled_stages=pipeline_cfg["enabled_stages"],
+        ),
+        task_id=new_task_id,
+    )
+
+    logger.info(
+        "task-retry: {} → {} level={} md5={}",
+        task_id, new_task_id, level, md5 or "?",
+    )
+    return {"retried_from": task_id, "task_id": new_task_id, "status": TaskStatus.PENDING.value}
+
+
 @app.get("/api/v1/tasks/{task_id}/report")
 def get_report(task_id: str) -> FileResponse:
     path = _resolve_file_path(task_id, "report")

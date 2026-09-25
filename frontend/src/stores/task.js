@@ -465,6 +465,31 @@ export const useTaskStore = defineStore('task', {
       }
     },
 
+    // 重试终态任务（失败/被停止）：按原 level + 输入 MD5 秒传重新提交，接入新任务进度
+    async retryTask(taskId = '') {
+      const target = taskId || this.current?.task_id
+      if (!target) return
+      // 取原任务 level（历史列表中的任务 → 重新查一次状态）
+      let level = this.current?.level || 'intermediate'
+      if (this.current?.task_id !== target) {
+        try {
+          level = (await api.getTaskDetail(target)).level || 'intermediate'
+        } catch {
+          level = 'intermediate'
+        }
+      }
+      try {
+        const res = await api.retryTask(target)
+        this.showHistory = false
+        this.error = null
+        // 新任务：复用 _beginTask 接入轮询
+        this._beginTask(res, '', level, '', false)
+        this.loadTasks() // 刷新历史列表（新任务入列）
+      } catch (e) {
+        this.error = `重试任务 ${target} 失败：${e.message || e}`
+      }
+    },
+
     clear() {
       this._stopPolling()
       this.current = null

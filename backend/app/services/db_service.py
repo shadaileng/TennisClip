@@ -594,6 +594,7 @@ def get_task_detail(task_id: str) -> dict | None:
             return {
                 "task_id": task.task_id,
                 "status": task.status,
+                "level": task.level,
                 "stage": "done" if task.status == "succeeded" else task.status,
                 "source_video": task.source_video or (inp.file_name if inp else ""),
                 "highlight": highlight,

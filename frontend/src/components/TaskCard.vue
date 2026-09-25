@@ -112,6 +112,13 @@ function nodeConnectorClass(s) {
           ⏹ 停止
         </button>
         <button
+          v-if="task && (task.status === 'failed' || task.status === 'timeout')"
+          class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-200"
+          @click="store.retryTask()"
+        >
+          ↻ 重试
+        </button>
+        <button
           v-if="task"
           class="text-xs text-slate-400 hover:text-slate-200"
           @click="emit('clear')"
