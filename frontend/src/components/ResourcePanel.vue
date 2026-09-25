@@ -60,7 +60,8 @@ async function fetchStats() {
   try {
     loading.value = true
     error.value = null
-    const res = await fetch(api.url('/api/v1/system/stats'))
+    const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+    const res = await fetch(`${API_BASE_URL}/api/v1/system/stats`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const d = await res.json()
     cpuPercent.value = d.cpu?.percent ?? null

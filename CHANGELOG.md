@@ -8,10 +8,21 @@
 
 ### Added
 
+- CV 感知层 GPU 接入（v0.22.0）：`cv_runtime.resolve_device` 统一设备解析（`auto`=有 CUDA 用 CUDA 否则 CPU，`cuda`/`cpu` 显式），`load_torch_model(path, device="auto")` 加载时 `.to(device).eval()`；`cv_tracknet` / `cv_court` / `cv_stroke_cls` 推理张量 `.to(dev)`，`cv_clip_score` / `cv_player`（YOLO）节点补 `device` ParamSpec；4 个节点（`detect.tracknet` / `detect.court` / `post.score_highlights` / `post.classify_strokes`）暴露 `device=auto` 参数，默认有 GPU 自动走 CUDA；`cv_tracknet` 每 100 采样帧打进度日志（便于长视频监控）；全量 317 测试通过、日志规范通过。实测 Tesla T4 环境 `resolve_device('auto')` → `cuda` ✓（当前容器未挂载 GPU 设备，`gpu` 字段返回 `null` 为正确降级）
+- 前端实时资源监控面板（v0.22.0）：后端新增 `app/utils/system_stats.py`（基于 `/proc/stat`、`/proc/meminfo`、`nvidia-smi` 聚合 CPU/内存/任务队列/GPU），`GET /api/v1/system/stats` 端点；`frontend/src/components/ResourcePanel.vue` 常驻轮询（运行中任务 2s / 空闲 10s），带 CPU/内存进度条（<50% 绿 / <80% 黄 / ≥80% 红）、任务队列计数、GPU 卡信息（有设备时展示每张卡的利用率 + 显存，无设备显示「GPU 未检测到」）；App.vue 在 TaskCard 上方挂载 ResourcePanel；`tests/test_system_stats.py` 2 用例覆盖端点响应结构与 JSON 可序列化；全量 319 测试通过、日志规范通过
 - 日志时间加 UTC 标志：`app/utils/logger.py` 的 `FMT_TEXT`/`FMT_CONSOLE` 时间格式改为 `{time:YYYY-MM-DD HH:mm:ss.SSSZ!UTC}`（loguru `!UTC` 后缀强制换算为 UTC、`Z` 令牌输出 `+00:00` 偏移），输出形如 `2026-09-25 02:52:47.004+00:00 | INFO ...`，与服务器时区解耦、跨机器日志时间一致，读取方按需换算本地时间便于本地化聚合；控制台彩色版同步保留 `<green>` 包裹；新增 `tests/test_logging.py` TC-07（正则断言 `\+00:00` 存在 + 解析时间与 `datetime.now(timezone.utc)` 相差 < 5s，证明确经换算而非贴标），`test_logging.py` 7 用例全绿、全量 318 测试通过；同步 `AGENTS.md` 统一格式规范与方案文档 `02-后端loguru日志TDD方案.md`（v1.0.3）
 - 失管后台服务进程查询/清理脚本 `scripts/manage_services.py`（纯标准库、仅依赖 Linux `/proc`）：`list` 只读排查（PID/PPID/运行时长/端口/服务/是否孤儿，`--json` 机器可读，退出码 0=干净/1=有目标）、`clean --dry-run` 预览不发信号、`clean --yes` 按「SIGTERM → 等待校验 → 必要时 SIGKILL → 复验进程与端口」回收（退出码 0=已清干净/1=有残留）；识别 uvicorn/vite/esbuild/vitepress/`pnpm|npm|yarn dev`/`sh -c` 包装层并**向后代展开**（uvicorn multiprocessing 子进程、sh 中间层一并捕获）；安全过滤——永不清理自身进程链、IDE/code-server、grep/ps/rg 等检索工具，默认要求进程 cwd 在项目根内（`--any-cwd` 放开），非交互环境必须显式 `--yes`；新增 `backend/tests/test_manage_services.py` 21 用例（规则匹配矩阵/自身链保护/孤儿判定/端口识别/JSON 契约/dry-run 零信号）
 - `AGENTS.md` 新增边界规则「禁止自动启动后台服务」：agent 不得以 `&`/`nohup`/`setsid`/`start`/`background` 启动常驻服务并放任后台运行（会话结束即成孤儿进程，端口占用、用户难回收）；确需启动须 ①前台或带超时 ②先征得用户同意 ③用完同轮内停止并校验退出；配套在「构建 / 运行 / 测试」补 `manage_services.py` 三条命令与「失管进程查询与回收」条目
 - 新增文档 `docs/plans/13-场景图关系感知节点方案.md`（📋 待执行）及 `docs/README.md` 文档一览/执行进度、`docs/.vitepress/config.mts` 侧边栏同步
+
+### Fixed
+
+- CV 设备值防御守卫（v0.22.1）：`cv_runtime.ensure_device` 新增类型强约束，对 `float`/`None`/对象等非法类型记录 warning 并回退 `auto` 语义，杜绝 `.to(dev)` 报 `'float' object has no attribute 'to'`；所有 cv_* 模块改用 `ensure_device` 替代直接 `resolve_device`；`tests/test_cv_runtime_device.py` 13 用例覆盖合法路径与非法类型拦截；该错误根因为 `--reload` 重启过渡期旧字节码缓存残留导致的间歇现象，守卫使同类问题即使复现也能 fail-safe 回退 CPU 而不炸推理链路
+- 前端错误信息换行显示（v0.22.2）：`TaskDetailModal` / `TaskHistory` 的 error 字段加 `break-words whitespace-pre-wrap`，多行错误不再挤占同行布局
+
+### Changed
+
+- 前端轮询自适应：当 `store.current.status` 变化时，`ResourcePanel` 强制立即刷新一次（与任务进度轮询频率联动）
 
 ## [0.21.0] - 2026-09-25
 
@@ -334,3 +345,4 @@
 - 添加 StepFun / OpenAI 兼容 provider 配置与 mock 回退能力
 - 提供 SQLite / PostgreSQL / MySQL 多数据库适配与自动落库
 - 增加高光识别、自动剪辑、结构化动作技术报告生成流水线
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
