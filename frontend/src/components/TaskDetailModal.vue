@@ -84,13 +84,16 @@ function fmtTime(iso) {
       <span>层级：{{ LEVEL_LABELS[task.level] || task.level }}</span>
       <span>耗时：{{ fmtDuration(task.elapsed_seconds) }}</span>
       <span v-if="task.created_at">创建：{{ fmtTime(task.created_at) }}</span>
-      <span v-if="task.error" class="text-red-400">错误：{{ task.error }}</span>
+      <!-- 错误占满整行并换行，避免挤压同行的层级/耗时信息 -->
+      <span v-if="task.error" class="w-full break-words whitespace-pre-wrap leading-relaxed text-red-400">
+        错误：{{ task.error }}
+      </span>
     </div>
 
     <!-- 内容区 -->
     <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
       <!-- 失败/处理中 -->
-      <p v-if="task.status === 'failed' || task.status === 'timeout'" class="py-8 text-center text-sm text-red-400">
+      <p v-if="task.status === 'failed' || task.status === 'timeout'" class="break-words whitespace-pre-wrap py-8 text-center text-sm leading-relaxed text-red-400">
         任务处理失败：{{ task.error || task.status }}
       </p>
       <p v-else-if="task.status !== 'succeeded'" class="py-8 text-center text-sm text-slate-500">

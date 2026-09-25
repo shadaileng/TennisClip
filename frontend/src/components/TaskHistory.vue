@@ -152,28 +152,34 @@ watch(() => store.showHistory, (v) => {
             </div>
             <span class="text-[11px] text-slate-500">{{ fmtTime(task.created_at) }}</span>
           </div>
-          <div class="mt-1.5 flex items-center gap-3 text-[11px] text-slate-500">
+          <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
             <span>{{ LEVEL_LABELS[task.level] || task.level }}</span>
             <span>耗时 {{ fmtDuration(task.elapsed_seconds) }}</span>
             <span v-if="isRunning(task)" class="text-blue-400">进行中 · 点击查看实时进度</span>
-              <button
-                v-if="isRunning(task)"
-                type="button"
-                class="rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-300 transition hover:border-red-400 hover:bg-red-500/20"
-                @click.stop="store.stopTask(task.task_id)"
-              >
-                停止
-              </button>
-              <button
-                v-else-if="task.status === 'failed'"
-                type="button"
-                class="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/20"
-                @click.stop="store.retryTask(task.task_id)"
-              >
-                重试
-              </button>
-              <span v-if="!isRunning(task) && task.error" class="truncate text-red-400">{{ task.error }}</span>
+            <button
+              v-if="isRunning(task)"
+              type="button"
+              class="rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-300 transition hover:border-red-400 hover:bg-red-500/20"
+              @click.stop="store.stopTask(task.task_id)"
+            >
+              停止
+            </button>
+            <button
+              v-else-if="task.status === 'failed'"
+              type="button"
+              class="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400 hover:bg-emerald-500/20"
+              @click.stop="store.retryTask(task.task_id)"
+            >
+              重试
+            </button>
           </div>
+          <!-- 错误信息独立成行：多行换行显示，不与上一行的状态/按钮抢宽度 -->
+          <p
+            v-if="!isRunning(task) && task.error"
+            class="mt-1.5 max-w-full break-words whitespace-pre-wrap rounded-md bg-red-500/5 px-2 py-1 text-[11px] leading-relaxed text-red-400"
+          >
+            {{ task.error }}
+          </p>
         </li>
       </ul>
     </div>
