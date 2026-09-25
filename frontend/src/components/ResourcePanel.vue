@@ -56,6 +56,20 @@ function memColor(v) {
   return 'text-red-400'
 }
 
+// GPU 条颜色：利用率与显存共用（绿 < 60 / 黄 < 85 / 红 ≥ 85）
+function gpuColor(pct) {
+  if (pct == null || isNaN(pct)) return 'bg-slate-600'
+  if (pct < 60) return 'bg-emerald-500'
+  if (pct < 85) return 'bg-yellow-500'
+  return 'bg-red-500'
+}
+
+// 显存占用比例 0~1（避免除零）
+function memRatio(g) {
+  if (!g || !g.memory_total_mb) return 0
+  return (g.memory_used_mb || 0) / g.memory_total_mb
+}
+
 async function fetchStats() {
   try {
     loading.value = true
@@ -173,20 +187,36 @@ watch(
         <span class="text-slate-400">GPU</span>
         <span class="font-mono text-purple-400">{{ gpus.length }} 卡</span>
       </div>
-      <ul class="space-y-2">
+      <ul class="space-y-3">
         <li v-for="g in gpus" :key="g.index">
-          <div class="mb-1 flex items-center justify-between">
+          <div class="mb-1.5 flex items-center justify-between">
             <span class="text-slate-300">{{ g.name }} #{{ g.index }}</span>
             <span class="font-mono text-purple-300">{{ g.utilization_percent ?? '—' }}%</span>
           </div>
-          <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-            <div
-              class="h-full rounded-full bg-purple-500 transition-all duration-500"
-              :style="{ width: (g.utilization_percent ?? 0) + '%' }"
-            />
+          <!-- 利用率：算力核心忙碌时间占比 -->
+          <div class="mb-1 flex items-center gap-2">
+            <span class="w-8 shrink-0 text-[10px] text-slate-500">利用率</span>
+            <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+              <div
+                class="h-full rounded-full transition-all duration-500"
+                :class="gpuColor(g.utilization_percent)"
+                :style="{ width: (g.utilization_percent ?? 0) + '%' }"
+              />
+            </div>
           </div>
-          <div class="mt-0.5 text-[10px] text-slate-500">
-            显存 {{ fmtBytes(g.memory_used_mb) }} / {{ fmtBytes(g.memory_total_mb) }}
+          <!-- 显存：容量占用（与利用率是不同维度，勿混读） -->
+          <div class="flex items-center gap-2">
+            <span class="w-8 shrink-0 text-[10px] text-slate-500">显存</span>
+            <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+              <div
+                class="h-full rounded-full transition-all duration-500"
+                :class="gpuColor(memRatio(g) * 100)"
+                :style="{ width: Math.min(100, memRatio(g) * 100) + '%' }"
+              />
+            </div>
+            <span class="w-24 shrink-0 text-right font-mono text-[10px] text-slate-400">
+              {{ fmtBytes(g.memory_used_mb) }} / {{ fmtBytes(g.memory_total_mb) }}
+            </span>
           </div>
         </li>
       </ul>
