@@ -180,3 +180,77 @@ def test_detect_candidates_top_n_none_returns_all(tmp_path, monkeypatch):
     assert len(cands_capped) == 2, "显式 top_n 应按上限截断"
     cands_default = event_detect.detect_candidates(tmp_path / "x.mp4", cfg, 30.0)
     assert len(cands_default) == 4, "缺省 top_n 不截断（与 all 档位一致）"
+
+
+# ---------- 候选窗口超长拆分（点过密 → 整段连成一个窗口的回归） ----------
+
+def _dense_track(duration: float, step: float = 1.0):
+    """构造步长恒定的密集轨迹（间隔 < hit_cluster_gap_seconds=4s → 必然聚成单簇）。"""
+    pts, t = [], 0.0
+    while t < duration:
+        pts.append({"t": round(t, 3), "x": 100.0, "y": 100.0, "confidence": 0.9})
+        t += step
+    return pts
+
+
+def test_track_to_candidates_splits_overlong_window():
+    """60s 密集轨迹必须拆成多个回合窗口，且互不重叠、跨度受上限约束。
+
+    回归背景：121s 单窗口 → 非 all 档 video_editor 从窗口起点截 15s，
+    输出退化为「视频开头 15 秒」。
+    """
+    cfg = load_config()
+    hl = cfg.highlight
+    hl.hit_max_window_seconds = 20.0
+    duration = 60.0
+
+    segs = event_detect.track_to_candidates(_dense_track(duration), duration, hl, top_n=None)
+
+    assert len(segs) >= 2, f"密集轨迹应拆成多个窗口，实际 {len(segs)} 个"
+    cap = hl.hit_max_window_seconds + 2 * hl.hit_window_expand
+    for s in segs:
+        assert (s.end - s.start) <= cap + 1e-6, f"窗口 {s.start}-{s.end} 超过上限 {cap}"
+    ordered = sorted(segs, key=lambda x: x.start)
+    for a, b in zip(ordered, ordered[1:]):
+        assert a.end <= b.start + 1e-6, f"窗口重叠：{a.start}-{a.end} vs {b.start}-{b.end}"
+
+
+def test_track_to_candidates_short_chain_unchanged():
+    """短轨迹（≤ 上限）不拆分，保持单窗口。"""
+    cfg = load_config()
+    hl = cfg.highlight
+    hl.hit_max_window_seconds = 20.0
+
+    segs = event_detect.track_to_candidates(_dense_track(10.0), 10.0, hl, top_n=None)
+    assert len(segs) == 1
+    assert segs[0].start <= 0.0 + 1e-6  # 起点受 hit_window_expand 外扩到 0
+
+
+def test_track_to_candidates_split_disabled_when_zero():
+    """hit_max_window_seconds <= 0 关闭拆分（回退旧的单窗口行为）。"""
+    cfg = load_config()
+    hl = cfg.highlight
+    hl.hit_max_window_seconds = 0.0
+
+    segs = event_detect.track_to_candidates(_dense_track(60.0), 60.0, hl, top_n=None)
+    assert len(segs) == 1
+    assert segs[0].end - segs[0].start >= 60.0 - 1e-6
+
+
+def test_split_long_cluster_cuts_at_largest_gap():
+    """最大间隔处切分，且每段跨度 ≤ 上限。"""
+    times = [0.0, 1.0, 2.0, 20.0, 21.0, 40.0, 41.0]
+    pieces = event_detect._split_long_cluster(times, 10.0)
+    assert len(pieces) >= 2
+    for p in pieces:
+        assert (p[-1] - p[0]) <= 10.0 + 1e-6
+    # 所有时间点都保留，不丢数据
+    assert sorted(t for p in pieces for t in p) == times
+
+
+def test_split_long_cluster_gives_up_when_gaps_too_small():
+    """最大间隔 ≤ 合并阈值(0.5s)时无法区分回合 → 放弃拆分。"""
+    times = [round(i * 0.4, 3) for i in range(75)]  # 0~29.6s，最大间隔 0.4s
+    pieces = event_detect._split_long_cluster(times, 10.0)
+    assert len(pieces) == 1
+    assert pieces[0] == times

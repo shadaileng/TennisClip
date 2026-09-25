@@ -61,6 +61,7 @@ highlight:
   audio_hit_percentile: 95      # 瞬态包络自适应阈值分位（0-100）
   hit_cluster_gap_seconds: 4.0  # 相邻击球聚为回合的间隔上限（秒）
   hit_window_expand: 2.0        # 回合窗口两侧外扩（秒）
+  hit_max_window_seconds: 20.0  # 单候选窗口最大跨度（秒），超长按最大间隔拆分成多回合（<=0 关闭）
   # 运动强度分位爆发（辅助/无声兜底）
   motion_action_percentile: 80  # 运动分数分位阈值（0-100）
   # 准备段后过滤（安全网）

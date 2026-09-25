@@ -24,6 +24,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# 窗口合并阈值（秒）：相邻窗口间隔 ≤ 该值视为同一回合（外扩后会重叠）
+_MERGE_GAP_SECONDS = 0.5
+
 try:
     import numpy as np
 except ImportError:  # 允许 numpy 缺失时降级（不阻断主流程，回退方案 1）
@@ -358,6 +361,8 @@ def track_to_candidates(
     if not clusters:
         return []
     merged = _merge_windows(clusters)
+    # 点过密导致的超长窗口按最大间隔拆分（否则下游只能从起点截 target_duration）
+    merged = _split_overlong_windows(merged, hits, duration, config)
     merged.sort(key=lambda c: c[2], reverse=True)
     top = merged if top_n is None else merged[:top_n]
     segs = _windows_to_segments(top, duration, config)
@@ -401,9 +406,75 @@ def _merge_windows(candidates):
     merged = [list(cand[0])]
     for s, e, sc in cand[1:]:
         last = merged[-1]
-        if s <= last[1] + 0.5:
+        if s <= last[1] + _MERGE_GAP_SECONDS:
             last[1] = max(last[1], e)
             last[2] = max(last[2], sc)
         else:
             merged.append([s, e, sc])
     return [tuple(m) for m in merged]
+
+
+def _split_long_cluster(times: List[float], max_len: float) -> List[List[float]]:
+    """把过长的时间簇按「最大间隔」递归拆成多段。
+
+    轨迹点/击球点在回合内几乎连续（相邻间隔 < hit_cluster_gap_seconds=4s），
+    整段视频会连成一个超长簇（实测 121s 单窗口）；回合之间最稀疏，
+    在最大间隔处切分即可自然断开。最大间隔 ≤ _MERGE_GAP_SECONDS（合并阈值）
+    说明无法区分回合，放弃拆分。
+    """
+    if len(times) < 2 or (times[-1] - times[0]) <= max_len:
+        return [times]
+    gaps = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+    max_gap = max(gaps)
+    if max_gap <= _MERGE_GAP_SECONDS:
+        return [times]
+    # 并列的最大间隔（密集等间隔轨迹的常态）取最靠近中点的切点，保证切分均衡；
+    # 否则总选最右切点会退化成「一段 + 一串单点」碎片。
+    midpoint = (times[0] + times[-1]) / 2
+    idx = min(
+        (i for i, g in enumerate(gaps) if g == max_gap),
+        key=lambda i: abs((times[i] + times[i + 1]) / 2 - midpoint),
+    )
+    return (
+        _split_long_cluster(times[: idx + 1], max_len)
+        + _split_long_cluster(times[idx + 1:], max_len)
+    )
+
+
+def _split_overlong_windows(candidates, hits, duration, config):
+    """合并后的超长窗口按命中点最大间隔拆分，恢复多个回合候选。
+
+    放在 ``_merge_windows`` **之后**执行：拆出的边界若先外扩再合并会被
+    重新粘回一个窗口（外扩 ±hit_window_expand 后必然重叠），故这里对外扩量
+    按相邻拆分间隔的一半收缩，保证拆出的窗口互不重叠且不再合并。
+
+    ``config.hit_max_window_seconds <= 0`` 时关闭拆分（保持旧行为）。
+    """
+    max_len = float(getattr(config, "hit_max_window_seconds", 0) or 0)
+    if max_len <= 0:
+        return list(candidates)
+    expand = float(config.hit_window_expand)
+    out: List[Tuple[float, float, float]] = []
+    for s, e, sc in candidates:
+        if e - s <= max_len:
+            out.append((s, e, sc))
+            continue
+        sub = sorted(t for t in hits if s <= t <= e)
+        pieces = [p for p in _split_long_cluster(sub, max_len) if p]
+        if len(pieces) < 2:
+            out.append((s, e, sc))
+            continue
+        for i, piece in enumerate(pieces):
+            # 内部边界只外扩到间隙中点，避免拆分窗口互相重叠
+            left_gap = piece[0] - pieces[i - 1][-1] if i > 0 else None
+            right_gap = pieces[i + 1][0] - piece[-1] if i + 1 < len(pieces) else None
+            left_exp = expand if left_gap is None else min(expand, left_gap / 2)
+            right_exp = expand if right_gap is None else min(expand, right_gap / 2)
+            start = max(0.0, piece[0] - left_exp)
+            end = min(float(duration), piece[-1] + right_exp)
+            # 过短片段丢弃：_windows_to_segments 会把 < min_segment_seconds 的窗口
+            # 强制拉长到该值，反而越过邻居边界造成重叠（重复画面）
+            if end - start < float(config.min_segment_seconds):
+                continue
+            out.append((start, end, float(len(piece))))
+    return out

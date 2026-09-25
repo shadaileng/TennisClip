@@ -110,6 +110,10 @@ class HighlightConfig:
     audio_hit_percentile: float = 95    # 瞬态包络自适应阈值分位（0-100）
     hit_cluster_gap_seconds: float = 4.0  # 相邻击球聚为回合的间隔上限（秒）
     hit_window_expand: float = 2.0     # 回合窗口两侧外扩（秒，含挥拍预备/随挥）
+    # 单个候选窗口最大跨度（秒）：轨迹/击球点过密时聚类会把整段视频连成一个超长
+    # 窗口（实测 121s 单窗口 → 非 all 档从起点截 target_duration，输出退化为开头 N 秒），
+    # 超过该跨度的窗口按「最大间隔」递归拆分恢复多个回合；<=0 关闭拆分
+    hit_max_window_seconds: float = 20.0
     # 运动强度分位爆发（辅助/无声兜底）
     motion_action_percentile: float = 80  # 运动分数分位阈值（0-100）
     # 准备段后过滤（安全网）
