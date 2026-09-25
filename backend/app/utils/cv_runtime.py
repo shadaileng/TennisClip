@@ -58,6 +58,8 @@ def resolve_device(prefer: str = "auto") -> str:
 
     无效值回退 auto 语义。供各 cv_* 薄封装统一选择推理设备（无 GPU 环境自动回退 CPU，
     保证 detect.* 节点 on_failure=skip 降级链在无 GPU 环境照常工作）。
+
+    返回值永远是 ``"cuda"`` 或 ``"cpu"`` 字符串，调用方可直接传给 tensor/model 的 .to()。
     """
     torch = require("torch")
     want = (prefer or "auto").lower()
@@ -70,6 +72,22 @@ def resolve_device(prefer: str = "auto") -> str:
         return "cpu"
     # auto / 其他：有 CUDA 用 CUDA，否则 CPU
     return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def ensure_device(dev: object) -> str:
+    """强约束设备标识为合法字符串（防御：调用方误传 float/None 等非 str 值）。
+
+    返回 ``"cuda"`` 或 ``"cpu"``，非法值记录 warning 并回退 auto 语义。
+    此函数应在每个 cv_* 模块使用 dev 之前调用一次，避免 '.to(dev)' 报
+    ``'float' object has no attribute 'to'`` 等难以排查的错误。
+    """
+    if isinstance(dev, str):
+        return resolve_device(dev)
+    logger.warning(
+        "cv_runtime.ensure_device: 收到非 str 设备值 {}（类型 {}），回退 auto",
+        repr(dev), type(dev).__name__,
+    )
+    return resolve_device("auto")
 
 
 def load_torch_model(path: Path, device: str = "auto") -> Any:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights, resolve_device
+from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights, resolve_device, ensure_device
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -111,7 +111,7 @@ def detect_court(
     torch = require("torch")
     cv2 = require("cv2")
     require("numpy")
-    dev = resolve_device(device)
+    dev = ensure_device(device)
     model = load_torch_model(
         resolve_weights(
             DEFAULT_WEIGHTS, weights,

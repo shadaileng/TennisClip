@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.models import Segment
-from app.utils.cv_runtime import CvUnavailable, require, sample_frames
+from app.utils.cv_runtime import CvUnavailable, require, sample_frames, ensure_device
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -65,7 +65,8 @@ def score_windows(
     """
     require("PIL")
     torch = require("torch")
-    net, processor, device = _load_clip(model, device)
+    dev = ensure_device(device)
+    net, processor, device = _load_clip(model, dev)
 
     texts = [p.strip() for p in phrases.split(",") if p.strip()] or [DEFAULT_PHRASES]
     results: list[tuple[Segment, float]] = []

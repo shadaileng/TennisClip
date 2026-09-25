@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.utils.cv_runtime import CvUnavailable, require
+from app.utils.cv_runtime import CvUnavailable, require, ensure_device
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -67,11 +67,7 @@ def compute_motion_scores(
     # device 语义对齐 torch：auto=有 CUDA 用 CUDA 否则 CPU（ultralytics 默认即此行为，
     # 但显式传入保证跨版本一致 + cpu 可强制回退）
     import torch
-    want = (device or "auto").lower()
-    if want in ("cpu",):
-        dev = "cpu"
-    else:  # auto / cuda / gpu
-        dev = "0" if torch.cuda.is_available() else "cpu"
+    dev = ensure_device(device)
     weight_name = weights or _MODEL_SIZES.get(model_size, _MODEL_SIZES["n"])
     try:
         model = YOLO(weight_name)  # 本地缺失时自动下载，离线会抛错

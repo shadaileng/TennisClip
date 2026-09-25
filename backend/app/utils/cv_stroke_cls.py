@@ -24,6 +24,7 @@ from app.utils.cv_runtime import (
     resolve_device,
     resolve_weights,
     sample_frames,
+    ensure_device,
 )
 from app.utils.logger import get_logger
 
@@ -204,7 +205,7 @@ def _classify_dtw(segments: list[Segment], pose: dict, weights: str) -> dict:
 def _classify_cnn(video_path: Path, segments: list[Segment], weights: str, device: str = "auto") -> dict:
     torch = require("torch")
     np = require("numpy")
-    dev = resolve_device(device)
+    dev = ensure_device(device)
     model = load_torch_model(
         resolve_weights(
             DEFAULT_WEIGHTS, weights,
