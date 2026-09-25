@@ -53,7 +53,9 @@ def run(ctx, params):
     config = ctx.config
 
     # all_mode 覆盖（批次 A2：函数式传递，禁止原地修改上游传入的 highlight）
-    if params["all_mode"]:
+    # 提交档位 level=all 强制全量（API 契约：all=遍历整段拼接全部高光、忽略目标时长），
+    # 优先于图内固化的 all_mode 参数——自定义图保存时的 False 不能压过提交档位。
+    if params["all_mode"] or getattr(ctx, "level", "") == "all":
         highlight = highlight.model_copy(update={
             "all_highlights": True,
             "target_duration": params["target_duration"],

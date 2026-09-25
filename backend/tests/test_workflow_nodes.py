@@ -360,3 +360,142 @@ def test_output_artifact_optional_inputs():
     assert result == {}
     # 没有输入时不写入任何字段
     assert result_obj.highlight_video_path is None
+
+
+# ---------- TC-15: 提交档位 level=all 对自定义图的兜底 ----------
+
+def test_report_technical_level_all_skips_report(tmp_path, monkeypatch):
+    """ctx.level=all 时 report.technical 直接返回 None，不调用 LLM 报告。
+
+    回归背景：自定义图节点 params 落库固化，提交档位 level=all 传不进节点，
+    报告节点照跑（撞外部 LLM 渠道错误才被 optional 跳过）。
+    """
+    from app.workflow.nodes import report_technical
+    from app.services import report as report_svc
+
+    calls = {"n": 0}
+
+    def fake_report(*args, **kwargs):
+        calls["n"] += 1
+        return TechnicalReport(summary="should not run")
+
+    monkeypatch.setattr(report_svc, "generate_report", fake_report)
+
+    ctx = FakeContext(
+        level="all",
+        task_out=tmp_path,
+        inputs={
+            "video": tmp_path / "v.mp4",
+            "highlight": HighlightResult(
+                segments=[Segment(start=0, end=5, label="ace", confidence=0.9)]
+            ),
+        },
+    )
+    result = report_technical.run(ctx, {"level": "intermediate", "knowledge_level": "standard"})
+    assert result == {"report": None}
+    assert calls["n"] == 0, "level=all 不应触发 report.generate_report"
+
+
+def test_report_technical_all_highlights_flag_also_skips(tmp_path, monkeypatch):
+    """上游 all_highlights=True 同样跳过（既有语义不回归）。"""
+    from app.workflow.nodes import report_technical
+    from app.services import report as report_svc
+
+    monkeypatch.setattr(report_svc, "generate_report",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("不应调用")))
+
+    ctx = FakeContext(
+        level="intermediate",
+        task_out=tmp_path,
+        inputs={
+            "video": tmp_path / "v.mp4",
+            "highlight": HighlightResult(segments=[], all_highlights=True),
+        },
+    )
+    assert report_technical.run(ctx, {"level": "intermediate"}) == {"report": None}
+
+
+def test_edit_concat_level_all_overrides_graph_param(tmp_path, monkeypatch):
+    """ctx.level=all 强制 all_mode，即使图内参数 all_mode=False（自定义图固化场景）。"""
+    from app.workflow.nodes import edit_concat
+    from app.services import video_editor as editor_svc
+
+    called = {}
+
+    def fake_edit(source, highlight, config):
+        called["all"] = highlight.all_highlights
+        out = tmp_path / "highlight_all.mp4"
+        out.write_bytes(b"dummy")
+        return out
+
+    monkeypatch.setattr(editor_svc, "edit_highlight_video", fake_edit)
+
+    ctx = FakeContext(
+        level="all",
+        video_path=tmp_path / "source.mp4",
+        task_out=tmp_path,
+        inputs={
+            "video": tmp_path / "source.mp4",
+            "highlight": HighlightResult(
+                segments=[Segment(start=0, end=10, label="ace", confidence=0.9)]
+            ),
+        },
+    )
+    # 图内参数显式为 False（正是 11031eca09a9 的场景）
+    edit_concat.run(ctx, {"target_duration": 15, "all_mode": False})
+    assert called["all"] is True, "level=all 必须压过图内 all_mode=False"
+
+
+def test_edit_concat_non_all_keeps_param(tmp_path, monkeypatch):
+    """非 all 档位不误伤：all_mode=False 时保持普通档语义。"""
+    from app.workflow.nodes import edit_concat
+    from app.services import video_editor as editor_svc
+
+    called = {}
+
+    def fake_edit(source, highlight, config):
+        called["all"] = highlight.all_highlights
+        out = tmp_path / "highlight.mp4"
+        out.write_bytes(b"dummy")
+        return out
+
+    monkeypatch.setattr(editor_svc, "edit_highlight_video", fake_edit)
+
+    ctx = FakeContext(
+        level="intermediate",
+        video_path=tmp_path / "source.mp4",
+        task_out=tmp_path,
+        inputs={
+            "video": tmp_path / "source.mp4",
+            "highlight": HighlightResult(
+                segments=[Segment(start=0, end=10, label="ace", confidence=0.9)]
+            ),
+        },
+    )
+    edit_concat.run(ctx, {"target_duration": 15, "all_mode": False})
+    assert called["all"] is False
+
+
+def test_post_filter_level_all_passes_through():
+    """ctx.level=all 时 post.filter_segments 透传：CLIP 低分段不被 min_confidence 清空。"""
+    from app.workflow.nodes import post_filter
+
+    hl = HighlightResult(
+        segments=[Segment(start=0, end=12, label="candidate", confidence=0.28)]
+    )
+    ctx = FakeContext(level="all", inputs={"highlight": hl})
+    result = post_filter.run(ctx, {
+        "min_confidence": 0.6,
+        "exclude_labels": "other",
+        "min_duration": 0.0,
+    })
+    assert len(result["highlight"].segments) == 1  # 原样透传
+
+    # 非 all 档位仍按阈值过滤（不误伤既有行为）
+    ctx2 = FakeContext(level="intermediate", inputs={"highlight": hl})
+    result2 = post_filter.run(ctx2, {
+        "min_confidence": 0.6,
+        "exclude_labels": "other",
+        "min_duration": 0.0,
+    })
+    assert result2["highlight"].segments == []

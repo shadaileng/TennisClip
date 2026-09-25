@@ -38,6 +38,11 @@ def run(ctx, params):
     if highlight is None:
         raise ValueError("节点 post.filter_segments 的必填输入 highlight 未连接")
 
+    # all 档位不过滤：API 契约 level=all = 所有高光回合；且 CLIP 分数普遍低于
+    # min_confidence（如 0.28 < 0.6）会被清空成无段。图内参数与提交档位任一命中即透传。
+    if getattr(highlight, "all_highlights", False) or getattr(ctx, "level", "") == "all":
+        return {"highlight": highlight}
+
     # 解析排除标签
     raw_labels = params.get("exclude_labels", "")
     excluded = {l.strip() for l in raw_labels.split(",") if l.strip()} if raw_labels else EXCLUDED_LABELS

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from app.services import report
+from app.utils.logger import get_logger
 from app.workflow.spec import (
     NodeSpec,
     ParamSpec,
@@ -14,6 +15,8 @@ from app.workflow.spec import (
     PortType,
     register,
 )
+
+logger = get_logger(__name__)
 
 
 @register(
@@ -51,8 +54,10 @@ def run(ctx, params):
     if highlight is None:
         raise ValueError("节点 report.technical 的必填输入 highlight 未连接")
 
-    # all 档位不生成报告
-    if highlight.all_highlights:
+    # all 档位不生成报告：提交档位 level=all 或上游 all_highlights 标记任一命中即跳过
+    #（API 契约 level=all = 仅剪辑拼接不生成报告；自定义图内 params 固化，须以提交档位兜底）
+    if highlight.all_highlights or getattr(ctx, "level", "") == "all":
+        logger.info("report: level=all 档位，跳过技术分析报告 task_id={}", getattr(ctx, "task_id", ""))
         return {"report": None}
 
     config = ctx.config
