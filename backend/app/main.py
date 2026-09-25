@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 import uuid
 from pathlib import Path
@@ -277,7 +276,7 @@ def system_stats() -> dict:
     queued = sum(
         1 for t in queue.get_task_statuses() if t.status == TaskStatus.PENDING
     )
-    return get_system_stats(running_tasks=running, queued_tasks=queued, pid=os.getpid())
+    return get_system_stats(running_tasks=running, queued_tasks=queued)
 
 
 @app.post("/api/v1/process")
