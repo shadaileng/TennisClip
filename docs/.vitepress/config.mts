@@ -44,6 +44,7 @@ export default defineConfig({
             { text: '11：工作流模式整合主界面', link: '/plans/11-工作流模式整合主界面' },
             { text: '12：本地大模型部署可行性方案', link: '/plans/12-本地大模型部署可行性方案' },
             { text: '13：场景图关系感知节点方案', link: '/plans/13-场景图关系感知节点方案' },
+            { text: '14：CV辅助网球回合识别评估方案', link: '/plans/14-CV辅助网球回合识别评估方案' },
           ],
         },
       ],
