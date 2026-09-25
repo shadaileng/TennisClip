@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from app.models import Segment
 from app.utils.cv_runtime import CvUnavailable, require, sample_frames, ensure_device
@@ -50,6 +51,29 @@ def _load_clip(model_key: str, device: str):
     return _CACHE[model_key]
 
 
+def _extract_embeds(out: object) -> Any:
+    """把 CLIP 特征输出统一成 tensor（兼容 transformers 两代返回类型）。
+
+    - transformers 4.x：``get_image_features`` / ``get_text_features`` 直接返回 tensor；
+    - transformers 5.x（本项目 5.17.0）：返回 ``BaseModelOutputWithPooling``，且其
+      ``pooler_output`` 已被替换为**投影后**的嵌入（源码里
+      ``vision_outputs.pooler_output = self.visual_projection(pooled_output)``），
+      直接当 tensor 调 ``.norm()`` 会抛
+      ``'BaseModelOutputWithPooling' object has no attribute 'norm'``。
+    """
+    torch = require("torch")
+    if torch.is_tensor(out):
+        return out
+    if isinstance(out, (tuple, list)) and out:
+        # ModelOutput 的元组形式：(last_hidden_state, pooler_output)，末位是嵌入
+        return out[-1]
+    for attr in ("pooler_output", "image_embeds", "text_embeds"):
+        val = getattr(out, attr, None)
+        if torch.is_tensor(val):
+            return val
+    raise CvUnavailable(f"无法从 CLIP 特征输出提取嵌入：{type(out).__name__}")
+
+
 def score_windows(
     video_path: Path,
     windows: list[Segment],
@@ -83,10 +107,14 @@ def score_windows(
             return_tensors="pt", padding=True, truncation=True,
         ).to(device)
         with torch.no_grad():
-            img_f = net.get_image_features(pixel_values=inputs["pixel_values"])
-            txt_f = net.get_text_features(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs.get("attention_mask"),
+            img_f = _extract_embeds(
+                net.get_image_features(pixel_values=inputs["pixel_values"])
+            )
+            txt_f = _extract_embeds(
+                net.get_text_features(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs.get("attention_mask"),
+                )
             )
         img_f = img_f / img_f.norm(dim=-1, keepdim=True)
         txt_f = txt_f / txt_f.norm(dim=-1, keepdim=True)
