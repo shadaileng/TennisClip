@@ -5,18 +5,19 @@
 > | 项目 | 内容 |
 > |------|------|
 > | 文档编号 | 02 |
-> | 文档版本 | v1.0.2 |
+> | 文档版本 | v1.0.3 |
 > | 文档状态 | 🏁 已完成 |
-> | 最后更新 | 2026-09-16 |
+> | 最后更新 | 2026-09-25 |
 > | 对应功能/内容 | 后端由标准 logging 替换为 loguru：双 sink（控制台 + 滚动文件）、统一拦截 uvicorn/FastAPI 日志、config.yaml + 环境变量控制级别、统一格式与带参调用规范 |
 >
 > **变更历史**
 >
 > | 日期 | 版本 | 说明 |
 > |------|:----:|------|
-> | 2026-09-15 | v1.0.0 | 初版（TDD 模式方案） |
-> | 2026-09-15 | v1.0.1 | 实施完成：TC-01~TC-06 全绿，27 处 %s 日志调用迁移为 {} 占位符，接入 uvicorn 拦截 |
+> | 2026-09-25 | v1.0.3 | 日志时间加 UTC 标志：`{time:YYYY-MM-DD HH:mm:ss.SSSZ!UTC}` 强制换算 UTC 并输出 `+00:00` 偏移，与服务器时区解耦、便于本地化换算；新增 TC-07 |
 > | 2026-09-16 | v1.0.2 | 修复 TC-04 跨测试污染：InterceptHandler 接管时复位被接管 logger 的 `disabled`/`level` 与全局 `logging.disable`；测试夹具 `_reset_logging` 新增 `_reset_stdlib` 重置标准库全局状态，避免第三方导入（uvicorn 等）静默禁用导致拦截失效 |
+> | 2026-09-15 | v1.0.1 | 实施完成：TC-01~TC-06 全绿，27 处 %s 日志调用迁移为 {} 占位符，接入 uvicorn 拦截 |
+> | 2026-09-15 | v1.0.0 | 初版（TDD 模式方案） |
 >
 > **关联文档**：[01-需求分析与落地方案](./01-需求分析与落地方案.md)、[AGENTS.md](../AGENTS.md)
 
@@ -72,6 +73,10 @@
 - `logger.info("path={} task_id={}", p, t)` 正确展开为 `path=<p> task_id=<t>`（验证 `{}` 位置参数 `str.format` 语义）。
 - `logger.bind(task_id=t).error("fail: {}", exc)` 日志中保留 `task_id` 上下文（验证 `bind().extra` 机制）。
 
+### TC-07 时间为 UTC 并带 +00:00 偏移标志（便于本地化换算）
+- 日志首行时间形如 `2026-09-25 02:52:47.004+00:00 | INFO ...`，正则断言 `\+00:00` 偏移存在。
+- 将捕获的时间按 UTC 解析，与 `datetime.now(timezone.utc)` 相差 < 5 秒（证明经 `!UTC` 强制换算、非本地时间直接贴标）。
+
 ### 测试脚手架要点（`backend/tests/test_logging.py`）
 ```python
 import logging
@@ -124,7 +129,7 @@ def tmp_log_file(tmp_path):
 
 - [ ] **Step 1 依赖**：`pyproject.toml` 的 `dependencies` 增加 `"loguru>=0.7"`，执行 `uv sync` 更新 `uv.lock`。
 - [ ] **Step 2 重写 `logger.py`**：
-  - 定义统一格式串：`FMT_TEXT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[name]}:{function}:{line} - {message}"`；控制台彩色版加 `<green>/<level>/<cyan>` 标签。
+  - 定义统一格式串：`FMT_TEXT = "{time:YYYY-MM-DD HH:mm:ss.SSSZ!UTC} | {level: <8} | {extra[name]}:{function}:{line} - {message}"`（时间经 `!UTC` 强制换算、`Z` 输出 `+00:00` 偏移）；控制台彩色版加 `<green>/<level>/<cyan>` 标签。
   - `setup_logging(log_file=None)`：幂等（`_configured` 标志）；添加控制台 sink（`sys.stderr`, `colorize=True`）与文件 sink（`log_file`, `rotation="10 MB"`, `retention="7 days"`, `compression="zip"`, `encoding="utf-8"`）；挂载 `InterceptHandler` 到 `logging.root` 并接管 uvicorn/fastapi logger。
   - `get_logger(name, level=None)`：返回 `logger.bind(name=name)`（保持 12 处调用点兼容）。
   - 级别解析：按 TC-03 顺序取值。
@@ -136,7 +141,7 @@ def tmp_log_file(tmp_path):
 
 ## 五、验收标准
 
-- `backend/tests/test_logging.py` 中 TC-01~TC-06 全部通过。
+- `backend/tests/test_logging.py` 中 TC-01~TC-07 全部通过。
 - 启动 `uv run uvicorn app.main:app --port 8000` 时，控制台与 `backend/data/app.log` 均按统一格式输出，且 uvicorn 启动/访问日志同格式呈现。
 - 设置 `TENNISCLIP_LOG_LEVEL=DEBUG` 可覆盖 `config.yaml` 级别。
 - 现有 12 处 `get_logger(name)` 调用点无改动且工作正常。

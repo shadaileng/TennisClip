@@ -54,6 +54,8 @@ TennisClip/                        # 总项目
 │   ├── plans/01-需求分析与落地方案.md  # 完整需求分析与落地方案
 │   ├── architecture/  references/  guides/
 │   └── .vitepress/config.mts      # 侧边栏配置（新增文档必须同步）
+├── scripts/                       # 根目录工具脚本（跨前后端）
+│   └── manage_services.py         # 失管后台服务进程查询/清理（list / clean）
 ├── .codebuddy/skills/docs-manage  # 文档管理 skill
 ├── AGENTS.md                       # AI 编码代理上下文与约定
 ├── README.md
@@ -173,6 +175,13 @@ pnpm dev          # http://127.0.0.1:5173，Vite 代理 /api、/health → 127.0
 ```
 
 先启动后台（`uv run uvicorn app.main:app`），再启动前端，浏览器访问 5173 即可联调。
+
+> **停止与清理**：服务请在各自终端 `Ctrl+C` 停止。若发现已失管的后台服务（孤儿进程、端口被占），用根目录脚本回收：
+>
+> ```bash> python3 scripts/manage_services.py list          # 只读查询（--json 机器可读）
+> python3 scripts/manage_services.py clean --dry-run   # 预览将清理的进程，不发信号
+> python3 scripts/manage_services.py clean --yes       # TERM → 校验 → 必要时 KILL → 复验
+> ```
 
 ### 4. 单端口部署（前端构建后由 FastAPI 托管）
 

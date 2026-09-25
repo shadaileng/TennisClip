@@ -3,6 +3,8 @@
 统一规范：
 - 双输出：控制台（stderr，彩色）+ 滚动文件（backend/data/app.log）。
 - 统一格式：时间 | 级别 | 模块:函数:行号 - 消息。
+  时间统一为 **UTC** 并带 `+00:00` 偏移标志（loguru `!UTC` 后缀强制换算），
+  与服务器时区解耦，读取方按需换算本地时间（便于本地化 / 跨时区聚合）。
 - 经 InterceptHandler 接管标准 logging（uvicorn / FastAPI），全链路风格一致。
 - 级别来源：环境变量 TENNISCLIP_LOG_LEVEL > config.yaml 的 logging.level > INFO。
 - 调用约定：延迟求值 `{}` 占位符；结构化上下文用 `logger.bind(key=value)`。
@@ -22,14 +24,16 @@ from loguru import logger as _loguru_logger
 from app.config import load_config
 
 # 统一格式规范（时间 | 级别 | 模块:函数:行号 - 消息）
+# 时间：毫秒精度 + UTC 换算（`!UTC` 后缀）+ `+00:00` 偏移标志（`Z` 令牌），
+# 例：2026-09-25 02:52:47.004+00:00 —— 显式 UTC，读取方按需转本地时间
 # 文件 sink 使用纯文本（无 ANSI 转义，便于 grep / 归档）
 FMT_TEXT = (
-    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
+    "{time:YYYY-MM-DD HH:mm:ss.SSSZ!UTC} | {level: <8} | "
     "{extra[name]}:{function}:{line} - {message}"
 )
 # 控制台 sink 增加颜色标签（colorize=True 时生效）
 FMT_CONSOLE = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | "
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSSZ!UTC}</green> | <level>{level: <8}</level> | "
     "<cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
 )
 

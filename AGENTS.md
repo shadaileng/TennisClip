@@ -58,6 +58,8 @@ TennisClip/
 │   ├── index.md              # VitePress 首页
 │   ├── .vitepress/config.mts # 侧边栏配置（新增文档必须同步）
 │   ├── plans/  architecture/  references/  guides/
+├── scripts/                  # 根目录工具脚本（跨前后端）
+│   └── manage_services.py    # 失管后台服务进程查询/清理（list / clean，纯标准库 + /proc）
 ├── .codebuddy/skills/        # 项目 skills（docs-manage / git-commit）
 ├── package.json              # 根项目配置：VitePress 文档站（pnpm 管理依赖，docs/ 为内容根）
 ├── AGENTS.md                 # 本文件
@@ -164,7 +166,7 @@ TennisClip/
 - 视频处理依赖系统 FFMPEG，新增调用走 `app/utils/ffmpeg.py` 封装。
 - 日志统一走 `app/utils/logger.py`（基于 **loguru**），勿直接 `print`。
   - **获取 logger**：`from app.utils.logger import get_logger; logger = get_logger(__name__)`，返回已绑定模块名的 loguru `Logger`，现有 12 处调用点无需改动。
-  - **统一格式规范**：`时间 | 级别 | 模块:函数:行号 - 消息`（时间毫秒精度 `YYYY-MM-DD HH:mm:ss.SSS`，级别按 `{level: <8}` 右补位）。
+  - **统一格式规范**：`时间 | 级别 | 模块:函数:行号 - 消息`（时间毫秒精度 **UTC** 带偏移标志 `YYYY-MM-DD HH:mm:ss.SSS+00:00`，经 loguru `{time:...!UTC}` 强制换算、与服务器时区解耦，读取方按需转本地时间；级别按 `{level: <8}` 右补位）。
     - 控制台 sink（stderr）带颜色标签；文件 sink（纯文本，无 ANSI 转义，便于 grep/归档）。
   - **日志级别来源**：环境变量 `TENNISCLIP_LOG_LEVEL` > `config.yaml` 的 `logging.level`（经 `AppConfig.logging_level`）> 默认 `INFO`。
   - **日志落盘**：`backend/data/app.log`，滚动 `rotation="10 MB"`、`retention="7 days"`、`compression="zip"`；已被 `.gitignore` 忽略，不入库。
@@ -254,12 +256,21 @@ pnpm install                 # 根目录安装 vitepress 等依赖
 pnpm run docs:dev            # http://127.0.0.1:5173 本地预览文档（与前端 dev 同端口，按需错开）
 pnpm run docs:build          # 产物 docs/.vitepress/dist/（.gitignore 忽略）
 pnpm run docs:preview        # 预览构建产物
+
+# 失管后台服务排查/回收（根目录，对应「边界与注意事项」孤儿进程禁令）
+python3 scripts/manage_services.py list             # 只读查询（--json 机器可读；退出码 0=干净/1=有目标）
+python3 scripts/manage_services.py clean --dry-run  # 预览将清理的进程，不发信号
+python3 scripts/manage_services.py clean --yes      # TERM→校验→KILL→复验（退出码 0=干净/1=有残留）
 ```
 
 需系统安装 [FFMPEG](https://ffmpeg.org/)（Windows：`winget install Gyan.FFmpeg`）。
 
+> 上述 `uvicorn` / `pnpm dev` / `docs:dev` 等常驻服务命令默认由**用户在自己的终端**启动；agent 不得自动以后台方式代启动（见「边界与注意事项」的孤儿进程禁令）。
+
 ## 边界与注意事项
 
+- **禁止自动启动后台服务**：agent 不得以 `&` / `nohup` / `setsid` / `start / background` 等方式自行启动常驻服务（`uv run uvicorn`、`pnpm dev`、`pnpm run docs:dev`、nginx 等）并放任其在后台运行——会话结束后进程脱离管理、成为**孤儿进程**，用户难以发现与回收（端口占用、僵尸服务）。确需启动时：① 优先前台运行或使用带超时的短生命周期命令；② 必须先向用户说明用途与端口、获得同意；③ 用完立即在同一轮内停止并确认进程已退出（`kill` 后校验，勿只 `kill` 不确认）。
+- **失管进程的查询与回收**用根目录 `scripts/manage_services.py`（纯标准库、只依赖 `/proc`）：`python3 scripts/manage_services.py list`（只读排查，含 `--json`，退出码 0=干净 / 1=有目标）、`... clean --dry-run`（预览不发信号）、`... clean --yes`（TERM → 等待校验 → 必要时 KILL → 复验端口，退出码 0=已清干净 / 1=有残留）。脚本自带安全过滤：永不清理自身进程链、IDE/code-server、grep/ps 等检索工具，且默认要求进程 cwd 在项目根内；勿另写一次性 `kill` 命令。
 - `.gitignore` 已忽略：`backend/.venv/`、`backend/data/`（数据库/输入/输出/日志整体忽略）、`backend/data_test/`（测试数据目录，隔离于 data/）、`backend/.env.test`（测试配置，本地用不入库）、`backend/test_roundtrip.db`（根目录遗留测试库）、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`。
 - 提交时勿将生成数据库或视频文件加入版本控制。
 - 本仓库已采用 MIT 协议（`LICENSE`），修改协议或版权署名需谨慎并同步 README。

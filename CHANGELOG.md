@@ -4,6 +4,15 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.22.0] - 2026-09-25
+
+### Added
+
+- 日志时间加 UTC 标志：`app/utils/logger.py` 的 `FMT_TEXT`/`FMT_CONSOLE` 时间格式改为 `{time:YYYY-MM-DD HH:mm:ss.SSSZ!UTC}`（loguru `!UTC` 后缀强制换算为 UTC、`Z` 令牌输出 `+00:00` 偏移），输出形如 `2026-09-25 02:52:47.004+00:00 | INFO ...`，与服务器时区解耦、跨机器日志时间一致，读取方按需换算本地时间便于本地化聚合；控制台彩色版同步保留 `<green>` 包裹；新增 `tests/test_logging.py` TC-07（正则断言 `\+00:00` 存在 + 解析时间与 `datetime.now(timezone.utc)` 相差 < 5s，证明确经换算而非贴标），`test_logging.py` 7 用例全绿、全量 318 测试通过；同步 `AGENTS.md` 统一格式规范与方案文档 `02-后端loguru日志TDD方案.md`（v1.0.3）
+- 失管后台服务进程查询/清理脚本 `scripts/manage_services.py`（纯标准库、仅依赖 Linux `/proc`）：`list` 只读排查（PID/PPID/运行时长/端口/服务/是否孤儿，`--json` 机器可读，退出码 0=干净/1=有目标）、`clean --dry-run` 预览不发信号、`clean --yes` 按「SIGTERM → 等待校验 → 必要时 SIGKILL → 复验进程与端口」回收（退出码 0=已清干净/1=有残留）；识别 uvicorn/vite/esbuild/vitepress/`pnpm|npm|yarn dev`/`sh -c` 包装层并**向后代展开**（uvicorn multiprocessing 子进程、sh 中间层一并捕获）；安全过滤——永不清理自身进程链、IDE/code-server、grep/ps/rg 等检索工具，默认要求进程 cwd 在项目根内（`--any-cwd` 放开），非交互环境必须显式 `--yes`；新增 `backend/tests/test_manage_services.py` 21 用例（规则匹配矩阵/自身链保护/孤儿判定/端口识别/JSON 契约/dry-run 零信号）
+- `AGENTS.md` 新增边界规则「禁止自动启动后台服务」：agent 不得以 `&`/`nohup`/`setsid`/`start`/`background` 启动常驻服务并放任后台运行（会话结束即成孤儿进程，端口占用、用户难回收）；确需启动须 ①前台或带超时 ②先征得用户同意 ③用完同轮内停止并校验退出；配套在「构建 / 运行 / 测试」补 `manage_services.py` 三条命令与「失管进程查询与回收」条目
+- 新增文档 `docs/plans/13-场景图关系感知节点方案.md`（📋 待执行）及 `docs/README.md` 文档一览/执行进度、`docs/.vitepress/config.mts` 侧边栏同步
+
 ## [0.21.0] - 2026-09-25
 
 ### Added

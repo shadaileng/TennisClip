@@ -1,6 +1,6 @@
 """TDD 测试：loguru 日志系统（双 sink / 统一格式 / uvicorn 拦截 / 级别来源 / 带参调用）。
 
-遵循 docs/plans/02-后端loguru日志TDD方案.md 的 TC-01~TC-06。
+遵循 docs/plans/02-后端loguru日志TDD方案.md 的 TC-01~TC-07。
 """
 
 from __future__ import annotations
@@ -147,3 +147,22 @@ def test_lazy_format_and_bind(tmp_log_file: Path):
     logger_mod._loguru_logger.complete()
     logger_mod._loguru_logger.remove(lid)
     assert any("task-1 | fail: boom" in c for c in captured)
+
+
+# TC-07 时间为 UTC 并带 +00:00 偏移标志（便于按需换算本地时间）
+def test_log_time_is_utc_with_offset(tmp_log_file: Path):
+    import re
+    from datetime import datetime, timezone
+
+    get_logger("svc").info("utc check")
+    _flush()
+    first_line = tmp_log_file.read_text(encoding="utf-8").splitlines()[0]
+
+    # 形如 2026-09-25 02:52:47.004+00:00 | INFO ...
+    m = re.match(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\+00:00 \| ", first_line)
+    assert m, f"时间未带 UTC 偏移标志：{first_line}"
+    # 换算为 UTC 后与当前 UTC 时间相差不超过 5 秒（排除跨秒误差）
+    logged = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S.%f").replace(
+        tzinfo=timezone.utc
+    )
+    assert abs((datetime.now(timezone.utc) - logged).total_seconds()) < 5
