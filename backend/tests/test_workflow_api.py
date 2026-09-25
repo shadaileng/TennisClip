@@ -200,3 +200,40 @@ class TestTC48ValidateDraft:
         resp_after = client.get("/api/v1/workflows")
         count_after = len(resp_after.json())
         assert count_after == count_before
+
+
+# ──────────── 复制工作流 ────────────
+class TestCloneWorkflowAPI:
+    """POST /api/v1/workflows/{id}/clone：内置可复制为可编辑副本；不存在 404。"""
+
+    def test_clone_builtin_returns_editable_copy(self, tmp_path, monkeypatch):
+        client = _setup_api(tmp_path, monkeypatch)
+        resp = client.post("/api/v1/workflows", json={
+            "name": "内置克隆",
+            "graph": _make_graph_dict(),
+            "is_builtin": True,
+        })
+        wf_id = resp.json()["id"]
+
+        resp = client.post(f"/api/v1/workflows/{wf_id}/clone")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "内置克隆 副本"
+
+        # 列表：副本非内置、原行仍是内置
+        wfs = client.get("/api/v1/workflows").json()
+        copy = next(w for w in wfs if w["id"] == data["id"])
+        original = next(w for w in wfs if w["id"] == wf_id)
+        assert copy["is_builtin"] == 0
+        assert original["is_builtin"] == 1
+
+        # 副本可编辑（PUT 200），原内置仍 403
+        resp = client.put(f"/api/v1/workflows/{data['id']}", json={"description": "改"})
+        assert resp.status_code == 200
+        resp = client.put(f"/api/v1/workflows/{wf_id}", json={"name": "改名"})
+        assert resp.status_code == 403
+
+    def test_clone_missing_returns_404(self, tmp_path, monkeypatch):
+        client = _setup_api(tmp_path, monkeypatch)
+        resp = client.post("/api/v1/workflows/99999/clone")
+        assert resp.status_code == 404

@@ -1,7 +1,8 @@
 """工作流持久化服务：CRUD、激活、种子。
 
 - create_workflow / get_workflow / list_workflows / update_workflow / delete_workflow
-- activate_workflow / seed_default_workflow / seed_cv_workflow / seed_builtin_presets
+- clone_workflow（复制为可编辑副本，内置也可复制）
+- activate_workflow / seed_default_workflow / seed_cv_workflow / seed_cv_debug_workflow / seed_builtin_presets
 - WorkflowConflict / WorkflowBuiltinProtected 异常
 """
 
@@ -223,13 +224,97 @@ def seed_cv_workflow(db: Session) -> None:
     logger.info("workflow: seeded CV builtin id={}", wf.id)
 
 
+def _cv_debug_graph_dict() -> dict:
+    """「CV 增强调试工作流」内置预置图：示例 C 链路 + 轨迹可视化诊断分支。
+
+    在 _cv_enhanced_graph_dict 基础上叠加（诊断分支不影响主链路）::
+
+        n2.video / n3.track / n2.duration → n8 post.visualize_track
+            （产物 track_overlay.mp4 经 persists 落库）
+
+    n8 为终端节点（输出端口悬空合法：R9 仅要求有入边）、on_failure=skip——
+    缺 CV 依赖/权重时仅诊断分支自身跳过，集锦/报告产物不受影响。
+    """
+    d = _cv_enhanced_graph_dict()
+    d["name"] = "CV 增强调试工作流"
+    d["nodes"].append(
+        {"id": "n8", "type": "post.visualize_track", "params": {}, "enabled": True}
+    )
+    d["edges"].extend([
+        {"id": "e13", "from": ["n2", "video"], "to": ["n8", "video"]},
+        {"id": "e14", "from": ["n3", "track"], "to": ["n8", "track"]},
+        {"id": "e15", "from": ["n2", "duration"], "to": ["n8", "duration"]},
+    ])
+    return d
+
+
+def seed_cv_debug_workflow(db: Session) -> None:
+    """「CV 增强调试工作流」内置预设种子（按名缺则补，存量库也生效）。
+
+    诊断版不改动既有「CV 增强工作流」（内置图 API 层 403 不可修改），
+    常规任务继续用原图零开销；需要核对 TrackNet 检出时激活本预设。
+    """
+    name = "CV 增强调试工作流"
+    if db.query(Workflows).filter_by(name=name).first():
+        return
+
+    wf = Workflows(
+        name=name,
+        description="诊断版：CV 增强链路 + 轨迹可视化分支（球轨迹折线 / 球员框 / 检出时间线 "
+                    "→ track_overlay.mp4），用于人工核对 TrackNet 是否检出球；需 CV 依赖组与权重",
+        graph_json=json.dumps(_cv_debug_graph_dict(), ensure_ascii=False),
+        is_builtin=1,
+        enabled=1,
+        sort_order=2,
+    )
+    db.add(wf)
+    db.flush()
+    logger.info("workflow: seeded CV-debug builtin id={}", wf.id)
+
+
+def clone_workflow(db: Session, wf_id: int) -> Workflows:
+    """复制工作流为可编辑副本（内置也可复制——绕开内置图 403 限制的正式入口）。
+
+    副本 ``is_builtin=0``、可改可删；名称自动生成「{原名} 副本」，
+    冲突时追加序号（副本 2、副本 3…）；graph_json 内嵌 name 同步为副本名。
+    不存在抛 ValueError。
+    """
+    wf = db.query(Workflows).filter_by(id=wf_id).first()
+    if wf is None:
+        raise ValueError(f"工作流不存在：id={wf_id}")
+
+    base = f"{wf.name} 副本"
+    name = base
+    seq = 2
+    while db.query(Workflows).filter_by(name=name).first():
+        name = f"{base} {seq}"
+        seq += 1
+
+    graph_dict = json.loads(wf.graph_json)
+    graph_dict["name"] = name
+
+    clone = Workflows(
+        name=name,
+        description=wf.description,
+        graph_json=json.dumps(graph_dict, ensure_ascii=False),
+        is_builtin=0,
+        enabled=1,
+        sort_order=wf.sort_order,
+    )
+    db.add(clone)
+    db.flush()
+    logger.info("workflow: cloned id={} → id={} name={}", wf_id, clone.id, name)
+    return clone
+
+
 def seed_builtin_presets(db: Session, config) -> None:
-    """启动期内置预设种子（幂等）：默认工作流 + CV 增强工作流。
+    """启动期内置预设种子（幂等）：默认工作流 + CV 增强工作流 + CV 增强调试工作流。
 
     - 默认工作流：全表 count==0（首次启动）才生成，语义不变；
-    - CV 增强工作流：按名缺则补（存量库也生效）。
+    - CV 增强工作流 / CV 增强调试工作流：按名缺则补（存量库也生效）。
 
     由 main.py 启动时调用（try/except 包裹，失败仅告警不阻断）。
     """
     seed_default_workflow(db, config)
     seed_cv_workflow(db)
+    seed_cv_debug_workflow(db)

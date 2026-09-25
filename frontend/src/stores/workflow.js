@@ -74,7 +74,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
       g.nodes.forEach((n, i) => {
         if (n._x === undefined) { n._x = 80 + (i % 4) * 260; n._y = 80 + Math.floor(i / 4) * 160 }
       })
-      draft.value = { id: wfData.id, name: wfData.name + '（副本）', graph: g }
+      // 内置工作流不可修改（PUT 403）：草稿不带原 id，保存时自动新建为副本；
+      // 用户自己的工作流保留 id，保存即原地更新。
+      draft.value = {
+        ...(wfData.is_builtin ? {} : { id: wfData.id }),
+        name: wfData.name + '（副本）',
+        graph: g,
+      }
     } else {
       draft.value = {
         name: '新工作流',
@@ -165,6 +171,24 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
+  /** 复制工作流（内置 → 可编辑副本），成功后刷新列表并提示 */
+  async function clone(id) {
+    try {
+      loading.value = true
+      error.value = ''
+      const result = await api.cloneWorkflow(id)
+      await loadWorkflows()
+      success.value = `已复制为「${result.name}」`
+      setTimeout(() => { success.value = '' }, 3000)
+      return result
+    } catch (e) {
+      error.value = e.message
+      return null
+    } finally {
+      loading.value = false
+    }
+  }
+
   /** 导出 JSON */
   function exportJson() {
     if (!draft.value) return
@@ -221,6 +245,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     saveDraft,
     activate,
     remove,
+    clone,
     exportJson,
     importJson,
   }

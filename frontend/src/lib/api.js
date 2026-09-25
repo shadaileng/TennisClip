@@ -286,6 +286,14 @@ export const api = {
     return parse(res)
   },
 
+  // 复制工作流（内置也可复制，返回可编辑副本）
+  async cloneWorkflow(id) {
+    const res = await fetch(url(`/api/v1/workflows/${encodeURIComponent(id)}/clone`), {
+      method: 'POST',
+    })
+    return parse(res)
+  },
+
   // 校验草稿图（不落库）
   async validateWorkflow(graph) {
     const res = await fetch(url('/api/v1/workflows/validate'), {

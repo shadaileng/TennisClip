@@ -724,3 +724,75 @@ def test_executor_tracknet_unavailable_cascades_skip(tmp_path, monkeypatch):
     assert statuses["n4"] == "skipped", "candidates 来源死亡 → analyze 级联跳过"
     assert statuses["n5"] == "skipped", "highlight 来源死亡 → artifact 级联跳过"
     assert result.highlight is None
+
+
+def test_executor_cv_debug_preset_end_to_end(tmp_path, monkeypatch):
+    """「CV 增强调试工作流」预置图端到端：主链路 succeeded + n8 诊断分支 done + track_overlay 落库参数正确。"""
+    from app.services import db_service, report, video_editor, workflow_service
+    from app.utils import cv_clip_score, cv_tracknet, cv_visualize
+    from app.workflow.executor import Executor
+    from app.workflow.graph import WorkflowGraph
+
+    _stub_preprocess(monkeypatch, tmp_path)
+    monkeypatch.setattr(db_service, "record_task_output", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cv_tracknet, "track_video",
+        lambda *a, **k: [{"t": t, "x": 100.0, "y": 50.0, "confidence": 0.92}
+                         for t in (5.0, 5.5, 6.0)],
+    )
+
+    def fake_score(video, windows, **kw):
+        return [(windows[0], 0.8)] if windows else []
+
+    monkeypatch.setattr(cv_clip_score, "score_windows", fake_score)
+
+    def fake_concat(video, highlight, config):
+        out = tmp_path / "highlight.mp4"
+        out.write_bytes(b"concat")
+        return out
+
+    monkeypatch.setattr(video_editor, "edit_highlight_video", fake_concat)
+
+    from app.models import TechnicalReport
+
+    monkeypatch.setattr(
+        report, "generate_report",
+        lambda *a, **k: TechnicalReport(summary="测试报告"),
+    )
+
+    captured = {}
+
+    def fake_render(video, track, out_path, **kw):
+        captured.update(n_points=len(track), show_players=kw.get("show_players"),
+                        out_path=out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"overlay")
+        return out_path
+
+    monkeypatch.setattr(cv_visualize, "render_track_overlay", fake_render)
+
+    # 直接执行真实预置图（种子用的同一 dict），校验 + 执行一条龙
+    graph = WorkflowGraph.from_dict(workflow_service._cv_debug_graph_dict())
+    validation = graph.validate()
+    assert validation["ok"], validation["errors"]
+
+    result = _make_result("e2e_cv_debug")
+    executor = Executor(graph, AppConfig(), result)
+    executor.execute(tmp_path / "source.mp4")
+
+    assert result.status == "succeeded", result.error
+    # 主链路产物不受诊断分支影响
+    assert result.highlight is not None
+    assert len(result.highlight.segments) == 1
+    assert result.highlight_video_path is not None
+    assert result.report is not None
+    # 全部 8 节点 done：n8 诊断分支与 n4 同层并行、输出悬空不影响收尾
+    statuses = {n.node_id: n.status for n in result.workflow_nodes}
+    assert statuses == {
+        "n1": "done", "n2": "done", "n3": "done", "n4": "done",
+        "n5": "done", "n6": "done", "n7": "done", "n8": "done",
+    }
+    # 渲染桩收到 track 轨迹点、产物写入 task_out/track_overlay.mp4
+    assert captured["n_points"] == 3
+    assert captured["out_path"].name == "track_overlay.mp4"
+    assert captured["out_path"].exists()

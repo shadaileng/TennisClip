@@ -180,6 +180,20 @@ def activate_workflow(wf_id: int):
     return {"ok": True, "activated_id": wf_id}
 
 
+@router.post("/{wf_id}/clone")
+def clone_workflow(wf_id: int):
+    """复制工作流为可编辑副本（内置也可复制），返回 {id, name}；不存在 404。"""
+    try:
+        with db_service.session() as s:
+            wf = workflow_service.clone_workflow(s, wf_id)
+            s.commit()
+            new_id, new_name = wf.id, wf.name
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {"id": new_id, "name": new_name}
+
+
 @router.post("/validate")
 def validate_workflow(body: ValidateRequest):
     """校验草稿图（不落库），返回 {ok, errors}。"""

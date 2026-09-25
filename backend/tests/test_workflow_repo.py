@@ -332,8 +332,8 @@ class TestSeedBuiltinPresets:
             wfs = workflow_service.list_workflows(s)
             assert len([w for w in wfs if w.name == "CV 增强工作流"]) == 1
 
-    def test_seed_builtin_presets_seeds_both_idempotent(self, tmp_path, monkeypatch):
-        """seed_builtin_presets：空库同时种子默认与 CV 两个内置预设，重复调用幂等。"""
+    def test_seed_builtin_presets_seeds_all_idempotent(self, tmp_path, monkeypatch):
+        """seed_builtin_presets：空库同时种子默认 / CV 增强 / CV 增强调试三个内置预设，重复调用幂等。"""
         SessionLocal = _setup_test_db(tmp_path, monkeypatch)
         from app.services import workflow_service
         from app.config import load_config
@@ -351,9 +351,10 @@ class TestSeedBuiltinPresets:
             wfs = workflow_service.list_workflows(s)
             assert len([w for w in wfs if w.name == "默认工作流"]) == 1
             assert len([w for w in wfs if w.name == "CV 增强工作流"]) == 1
+            assert len([w for w in wfs if w.name == "CV 增强调试工作流"]) == 1
 
     def test_seed_presets_respects_existing_rows(self, tmp_path, monkeypatch):
-        """已有数据时不补默认工作流（count==0 门控不变），CV 按名缺则补。"""
+        """已有数据时不补默认工作流（count==0 门控不变），CV 两个预设按名缺则补。"""
         SessionLocal = _setup_test_db(tmp_path, monkeypatch)
         from app.services import workflow_service
         from app.config import load_config
@@ -372,6 +373,7 @@ class TestSeedBuiltinPresets:
             wfs = workflow_service.list_workflows(s)
             assert len([w for w in wfs if w.name == "默认工作流"]) == 0
             assert len([w for w in wfs if w.name == "CV 增强工作流"]) == 1
+            assert len([w for w in wfs if w.name == "CV 增强调试工作流"]) == 1
 
     def test_cv_preset_is_builtin_protected(self, tmp_path, monkeypatch):
         """内置保护：CV 预设更新/删除均抛 WorkflowBuiltinProtected。"""
@@ -392,3 +394,126 @@ class TestSeedBuiltinPresets:
                 workflow_service.update_workflow(s, cv_id, name="改名")
             with pytest.raises(WorkflowBuiltinProtected):
                 workflow_service.delete_workflow(s, cv_id)
+
+
+# ──────────── 调试版预设（诊断分支） ────────────
+class TestSeedCvDebugPreset:
+    """「CV 增强调试工作流」种子：图合法含可视化分支 + 存量库按名缺则补。"""
+
+    def test_debug_seed_creates_builtin_with_valid_graph(self, tmp_path, monkeypatch):
+        """种子创建 is_builtin 调试预设：图过 R1~R10，含 post.visualize_track 诊断分支。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.workflow.graph import WorkflowGraph
+
+        with SessionLocal() as s:
+            workflow_service.seed_cv_debug_workflow(s)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            dbg = [w for w in wfs if w.name == "CV 增强调试工作流"]
+            assert len(dbg) == 1
+            assert dbg[0].is_builtin == 1
+            graph = json.loads(dbg[0].graph_json)
+            res = WorkflowGraph.from_dict(graph).validate()
+            assert res["ok"], res.get("errors")
+            # 诊断分支：n2.video / n3.track / n2.duration → n8 post.visualize_track
+            types = {n["id"]: n["type"] for n in graph["nodes"]}
+            assert types.get("n8") == "post.visualize_track"
+            edges = {(e["from"][0], e["from"][1], e["to"][0], e["to"][1])
+                     for e in graph["edges"]}
+            assert ("n3", "track", "n8", "track") in edges
+            assert ("n2", "video", "n8", "video") in edges
+
+    def test_debug_seed_fills_legacy_db(self, tmp_path, monkeypatch):
+        """存量库（已有 CV 增强、无调试版）→ seed_builtin_presets 补种调试版，原图不动。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.config import load_config
+
+        cfg = load_config()
+        # 模拟旧版存量库：只有 CV 增强
+        with SessionLocal() as s:
+            workflow_service.seed_cv_workflow(s)
+            s.commit()
+        with SessionLocal() as s:
+            workflow_service.seed_builtin_presets(s, cfg)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            assert len([w for w in wfs if w.name == "CV 增强调试工作流"]) == 1
+            # 原「CV 增强工作流」保持不含可视化节点（不改存量内置图）
+            cv = [w for w in wfs if w.name == "CV 增强工作流"][0]
+            cv_types = {n["type"] for n in json.loads(cv.graph_json)["nodes"]}
+            assert "post.visualize_track" not in cv_types
+
+
+# ──────────── 工作流复制 ────────────
+class TestCloneWorkflow:
+    """clone_workflow：内置可复制为可编辑副本，名称自动避让，原图/原行不变。"""
+
+    def test_clone_builtin_produces_editable_copy(self, tmp_path, monkeypatch):
+        """内置预设 → 副本 is_builtin=0、图一致（仅内嵌 name 同步）、原行不变。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+        from app.services.workflow_service import WorkflowBuiltinProtected
+
+        with SessionLocal() as s:
+            workflow_service.seed_cv_debug_workflow(s)
+            s.commit()
+        with SessionLocal() as s:
+            src = [w for w in workflow_service.list_workflows(s)
+                   if w.name == "CV 增强调试工作流"][0]
+            src_id, src_graph_json = src.id, src.graph_json
+            clone = workflow_service.clone_workflow(s, src_id)
+            s.commit()
+
+        with SessionLocal() as s:
+            wfs = workflow_service.list_workflows(s)
+            copies = [w for w in wfs if w.name == "CV 增强调试工作流 副本"]
+            assert len(copies) == 1
+            copy = copies[0]
+            assert copy.is_builtin == 0
+            # 图一致：仅内嵌 name 改为副本名
+            src_g = json.loads(src_graph_json)
+            copy_g = json.loads(copy.graph_json)
+            assert copy_g.pop("name") == copy.name
+            src_g.pop("name")
+            assert copy_g == src_g
+            # 副本可改可删；原内置行受保护且未被改动
+            workflow_service.update_workflow(s, copy.id, description="改")
+            workflow_service.delete_workflow(s, copy.id)
+            with pytest.raises(WorkflowBuiltinProtected):
+                workflow_service.update_workflow(s, src_id, name="改名")
+            assert [w for w in workflow_service.list_workflows(s)
+                    if w.id == src_id][0].graph_json == src_graph_json
+
+    def test_clone_name_conflict_appends_seq(self, tmp_path, monkeypatch):
+        """重复复制同名自动避让：副本 → 副本 2。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+
+        with SessionLocal() as s:
+            wf = workflow_service.create_workflow(s, "我的工作流", _make_default_graph_dict())
+            s.commit()
+            first_id = wf.id
+        with SessionLocal() as s:
+            c1 = workflow_service.clone_workflow(s, first_id)
+            s.commit()
+        with SessionLocal() as s:
+            c2 = workflow_service.clone_workflow(s, first_id)
+            s.commit()
+
+        assert c1.name == "我的工作流 副本"
+        assert c2.name == "我的工作流 副本 2"
+
+    def test_clone_missing_raises(self, tmp_path, monkeypatch):
+        """不存在的 id → ValueError（路由映射 404）。"""
+        SessionLocal = _setup_test_db(tmp_path, monkeypatch)
+        from app.services import workflow_service
+
+        with SessionLocal() as s:
+            with pytest.raises(ValueError, match="不存在"):
+                workflow_service.clone_workflow(s, 99999)

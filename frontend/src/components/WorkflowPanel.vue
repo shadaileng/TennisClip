@@ -174,6 +174,9 @@ const activeTab = ref('nodes')
       </div>
     </div>
 
+    <!-- 操作成功提示（复制/激活反馈） -->
+    <div v-if="store.success" class="border-b border-emerald-800 bg-emerald-900/30 px-5 py-1.5 text-xs text-emerald-300">{{ store.success }}</div>
+
     <div class="flex flex-1 overflow-hidden">
       <!-- 左侧：预设 + 节点目录 -->
       <div class="flex w-60 flex-col border-r border-slate-700 overflow-y-auto">
@@ -188,6 +191,7 @@ const activeTab = ref('nodes')
           <div v-for="wf in store.workflows" :key="wf.id" class="flex items-center justify-between rounded px-2 py-1 text-xs transition hover:bg-slate-800 cursor-pointer" :class="{ 'bg-emerald-900/30 text-emerald-300': wf.is_active }" @click="store.newDraft(wf)">
             <span class="truncate">{{ wf.name }}<span v-if="wf.is_builtin" class="ml-1 text-slate-500">🔒</span><span v-if="wf.is_active" class="ml-1 text-emerald-400">●</span></span>
             <div class="flex gap-1">
+              <button class="text-slate-500 hover:text-sky-400" title="复制为可编辑副本" @click.stop="store.clone(wf.id)">📋</button>
               <button class="text-slate-500 hover:text-emerald-400" title="激活" @click.stop="store.activate(wf.id)">✓</button>
               <button v-if="!wf.is_builtin" class="text-slate-500 hover:text-red-400" title="删除" @click.stop="store.remove(wf.id)">✕</button>
             </div>

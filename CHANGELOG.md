@@ -4,7 +4,14 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
-## [0.23.0] - 2026-09-25
+## [0.24.0] - 2026-09-25
+
+### Added
+
+- CV 增强调试预设与工作流复制（v0.24.0）：新增内置「CV 增强调试工作流」预置图（示例 C + `post.visualize_track` 诊断分支 n2.video/n3.track/n2.duration → n8，终端节点输出悬空合法、on_failure=skip 不影响主链路产物），`seed_builtin_presets` 按名幂等缺则补、存量库启动自动补种、常规任务零开销；新增 `POST /api/v1/workflows/{id}/clone` 复制为可编辑副本（内置也可复制、`is_builtin=0`、名称「{原名} 副本 [序号]」自动避让、graph_json 内嵌 name 同步、不存在 404）+ 画布预设行 📋 按钮与成功提示；修复内置预设打开草稿带原 id 保存必 403 的问题（草稿不带原 id，保存自动落为副本）；新增测试 8 用例（debug 种子×2/克隆×3/克隆 API×2/调试预设执行级 e2e），全量 390 测试通过；同步 AGENTS.md 与 docs/guides/01 使用指南 v1.3.0
+
+ - 2026-09-25
+
 
 ### Added
 

@@ -338,6 +338,7 @@ const paletteOpen = ref(false)
           <div v-for="wf in store.workflows" :key="wf.id" class="mb-0.5 flex items-center justify-between rounded px-2 py-1 text-[11px] hover:bg-slate-800 cursor-pointer group" :class="wf.is_active ? 'text-emerald-400' : 'text-slate-400'" @click="store.newDraft(wf)">
             <span class="truncate">{{ wf.name }}<span v-if="wf.is_active" class="ml-1">●</span></span>
             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button class="text-slate-600 hover:text-sky-400" title="复制为可编辑副本" @click.stop="store.clone(wf.id)">📋</button>
               <button v-if="!wf.is_active" class="text-slate-600 hover:text-emerald-400" title="激活此工作流" @click.stop="store.activate(wf.id)">⚡</button>
               <button v-if="!wf.is_builtin" class="text-slate-600 hover:text-red-400" @click.stop="store.remove(wf.id)">✕</button>
             </div>
