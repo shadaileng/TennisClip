@@ -31,6 +31,9 @@ from app.workflow.spec import (
                       min=50, max=99, description="运动强度分位阈值（%）"),
             ParamSpec(key="top_n", label="候选上限", type="int", default=5,
                       min=0, max=50, description="候选窗口上限；0=放开"),
+            ParamSpec(key="device", label="推理设备", type="select", default="auto",
+                      options=["auto", "cuda", "cpu"],
+                      description="auto=有 GPU 用 GPU 否则 CPU；cuda=强制 GPU；cpu=强制 CPU"),
         ],
         stage="detecting",
         on_failure="skip",  # GPU/权重易失败，降级不拖垮任务（方案 12 · 2.8）
@@ -48,6 +51,7 @@ def run(ctx, params):
 
     scores, step = cv_player.compute_motion_scores(
         video, float(duration), model_size=params["model_size"],
+        device=params.get("device", "auto"),
     )
     effective_top_n = None if params["top_n"] == 0 else params["top_n"]
     candidates = event_detect.scores_to_candidates(

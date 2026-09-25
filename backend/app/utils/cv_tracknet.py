@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights
+from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights, resolve_device
 from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
@@ -46,6 +46,7 @@ def track_video(
     weights: str = "",
     max_frames: int = 0,
     task_id: str = "",
+    device: str = "auto",
 ) -> list[dict]:
     """逐帧推理网球位置，返回按时间升序的轨迹点列表。
 
@@ -53,15 +54,22 @@ def track_video(
     - max_frames：调试用帧数上限（0=不限）；
     - task_id：协作式取消检查点——每个采样帧前检测旗标，命中即抛 TaskCancelled
       （torch 推理无法外部硬中断，取消语义为「当前帧跑完即止、不再进入下一帧」）；
+    - device：推理设备（auto=有 CUDA 用 CUDA 否则 CPU；cuda/cpu 显式），
+      GPU 环境下逐帧推理速度数量级提升；
     - 依赖 torch/opencv、权重缺失 → 抛 CvUnavailable（节点 on_failure=skip 降级）。
     """
     torch = require("torch")
     np = require("numpy")
     cv2 = require("cv2")
-    model = load_torch_model(resolve_weights(
-        DEFAULT_WEIGHTS, weights,
-        hint="放置 TrackNet 导出权重于 backend/data/models/tracknet.pth",
-    ))
+    dev = resolve_device(device)
+    model = load_torch_model(
+        resolve_weights(
+            DEFAULT_WEIGHTS, weights,
+            hint="放置 TrackNet 导出权重于 backend/data/models/tracknet.pth",
+        ),
+        device=dev,
+    )
+    logger.info("cv_tracknet: 推理设备 = {}", dev)
     if duration <= 0:
         return []
 
@@ -92,6 +100,7 @@ def track_video(
                     tensor = (
                         torch.from_numpy(stack.copy())
                         .permute(2, 0, 1).unsqueeze(0).float() / 255.0
+                        .to(dev)
                     )
                     with torch.no_grad():
                         out = model(tensor)
@@ -105,6 +114,12 @@ def track_video(
                             "y": point[1], "confidence": point[2],
                         })
                 sampled += 1
+                # 每 100 个采样帧打一次进度日志（低开销，便于监控长视频逐帧推理）
+                if sampled % 100 == 0:
+                    logger.info(
+                        "cv_tracknet: 进度 {}/采样帧 frame_no={} t={:.1f}s points={}",
+                        sampled, frame_no, frame_no / fps, len(points),
+                    )
                 if max_frames and sampled >= max_frames:
                     break
             frame_no += 1

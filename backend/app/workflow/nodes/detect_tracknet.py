@@ -39,6 +39,9 @@ from app.workflow.spec import (
                       min=0, max=50, description="候选窗口上限；0=放开"),
             ParamSpec(key="frame_stride", label="抽帧步长", type="int", default=1,
                       min=1, max=5, description="追踪时的帧采样步长（降 GPU 负载）"),
+            ParamSpec(key="device", label="推理设备", type="select", default="auto",
+                      options=["auto", "cuda", "cpu"],
+                      description="auto=有 GPU 用 GPU 否则 CPU；cuda=强制 GPU；cpu=强制 CPU"),
         ],
         stage="detecting",
         on_failure="skip",  # GPU/权重易失败，降级不拖垮任务（方案 12 · 2.8）
@@ -63,6 +66,7 @@ def run(ctx, params):
         confidence=params["confidence"],
         frame_stride=params["frame_stride"],
         task_id=getattr(ctx, "task_id", ""),
+        device=params.get("device", "auto"),
     )
     effective_top_n = None if params["top_n"] == 0 else params["top_n"]
     candidates = event_detect.track_to_candidates(

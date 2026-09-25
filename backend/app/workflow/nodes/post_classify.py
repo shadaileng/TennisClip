@@ -32,6 +32,9 @@ from app.workflow.spec import (
                       options=["cnn", "dtw"], description="cnn=3D CNN / dtw=姿态动态时间规整"),
             ParamSpec(key="min_confidence", label="最低置信度", type="float", default=0.5,
                       min=0.0, max=1.0, description="低于此置信度保留原 label 不覆盖"),
+            ParamSpec(key="device", label="推理设备", type="select", default="auto",
+                      options=["auto", "cuda", "cpu"],
+                      description="auto=有 GPU 用 GPU 否则 CPU；cuda=强制 GPU；cpu=强制 CPU"),
         ],
         stage="postprocessing",
     )
@@ -50,6 +53,7 @@ def run(ctx, params):
             ctx.video_path, segments,
             pose=pose,
             classifier=params["classifier"],
+            device=params.get("device", "auto"),
         )
         updated = []
         for idx, seg in enumerate(segments):

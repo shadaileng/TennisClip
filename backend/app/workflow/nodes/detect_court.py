@@ -25,6 +25,9 @@ from app.workflow.spec import (
                       description="是否用传统 CV 精修 + 单应性校正（+精度，-速度）"),
             ParamSpec(key="interval", label="检测间隔帧", type="int", default=30,
                       min=1, max=300, description="每隔多少帧检测一次（球场静止，无需逐帧）"),
+            ParamSpec(key="device", label="推理设备", type="select", default="auto",
+                      options=["auto", "cuda", "cpu"],
+                      description="auto=有 GPU 用 GPU 否则 CPU；cuda=强制 GPU；cpu=强制 CPU"),
         ],
         stage="detecting",
         on_failure="skip",  # GPU/权重易失败，降级不拖垮任务（方案 12 · 2.8）
@@ -40,5 +43,6 @@ def run(ctx, params):
         video,
         refine=params["refine"],
         interval=params["interval"],
+        device=params.get("device", "auto"),
     )
     return {"court": court}

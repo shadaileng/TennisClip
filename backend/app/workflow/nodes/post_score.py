@@ -35,6 +35,9 @@ from app.workflow.spec import (
             ParamSpec(key="highlight_phrases", label="高光描述", type="str",
                       default="exciting tennis rally, winning shot, ace serve, smash",
                       description="逗号分隔的高光文本描述（CLIP 匹配目标）"),
+            ParamSpec(key="device", label="推理设备", type="select", default="auto",
+                      options=["auto", "cuda", "cpu"],
+                      description="auto=有 GPU 用 GPU 否则 CPU；cuda=强制 GPU；cpu=强制 CPU"),
         ],
         stage="postprocessing",
     )
@@ -53,6 +56,7 @@ def run(ctx, params):
         video, candidates,
         model=params["clip_model"],
         phrases=params["highlight_phrases"],
+        device=params.get("device", "auto"),
     )
     min_score = params["min_score"]
     top = [

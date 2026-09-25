@@ -145,6 +145,7 @@ def test_new_node_param_defaults_and_boundaries():
     defaults = resolve_params(tn.params, {})
     assert defaults == {
         "confidence": 0.5, "cluster_gap": 4.0, "top_n": 5, "frame_stride": 1,
+        "device": "auto",
     }
     with pytest.raises(ValueError, match="confidence"):
         resolve_params(tn.params, {"confidence": 1.5})
@@ -316,6 +317,7 @@ def test_tracknet_missing_deps_raises_cvunavailable(tmp_path):
     with pytest.raises(CvUnavailable, match=r"CV 依赖|权重|不可读"):
         detect_tracknet.run(ctx, {
             "confidence": 0.5, "cluster_gap": 4.0, "top_n": 5, "frame_stride": 1,
+            "device": "auto",
         })
 
 
@@ -358,7 +360,7 @@ def test_court_node_passthrough_params(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_court(video, refine=True, interval=30, weights=""):
+    def fake_court(video, refine=True, interval=30, weights="", device="auto"):
         captured.update(refine=refine, interval=interval)
         return {"points": [[0.0, 0.0]] * 14, "homography": None}
 
@@ -462,7 +464,7 @@ def test_classify_node_rewrites_label_functionally(tmp_path, monkeypatch):
     ])
     captured = {}
 
-    def fake_classify(video, segments, pose=None, classifier="cnn", weights=""):
+    def fake_classify(video, segments, pose=None, classifier="cnn", weights="", device="auto"):
         captured.update(video=video, classifier=classifier, pose=pose, n=len(segments))
         return {0: ("backhand", 0.95), 1: ("serve", 0.3)}
 

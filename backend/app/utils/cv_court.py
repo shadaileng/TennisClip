@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights
+from app.utils.cv_runtime import CvUnavailable, load_torch_model, require, resolve_weights, resolve_device
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ KEYPOINT_COUNT = 14
 _QUANT = 4.0
 
 
-def _infer_points(model, torch, rgb_frame):
+def _infer_points(model, torch, rgb_frame, device: str = "cpu"):
     """单帧推理 → (points[14][2], homography|None)；点数不符返回 None。
 
     契约：输出与输入同分辨率的像素坐标；模型在缩放分辨率上推理时
@@ -33,6 +33,7 @@ def _infer_points(model, torch, rgb_frame):
     tensor = (
         torch.from_numpy(rgb_frame.copy())
         .permute(2, 0, 1).unsqueeze(0).float() / 255.0
+        .to(device)
     )
     with torch.no_grad():
         out = model(tensor)
@@ -98,20 +99,26 @@ def detect_court(
     interval: int = 30,
     weights: str = "",
     max_samples: int = 10,
+    device: str = "auto",
 ) -> dict:
     """检测球场 14 关键点，返回 ``{"points": [[x,y]×14], "homography": 3×3|None}``。
 
     - interval：每隔多少帧采样一次（球场静止，无需逐帧）；
     - max_samples：采样次数上限（抗时长，0=不限）；
+    - device：推理设备（auto=有 CUDA 用 CUDA 否则 CPU；cuda/cpu 显式）；
     - 依赖 torch/opencv、权重缺失 → 抛 CvUnavailable（节点 on_failure=skip 降级）。
     """
     torch = require("torch")
     cv2 = require("cv2")
     require("numpy")
-    model = load_torch_model(resolve_weights(
-        DEFAULT_WEIGHTS, weights,
-        hint="放置球场检测导出权重于 backend/data/models/court_detector.pth",
-    ))
+    dev = resolve_device(device)
+    model = load_torch_model(
+        resolve_weights(
+            DEFAULT_WEIGHTS, weights,
+            hint="放置球场检测导出权重于 backend/data/models/court_detector.pth",
+        ),
+        device=dev,
+    )
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -129,7 +136,7 @@ def detect_court(
                 break
             if frame_no % interval == 0:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                got = _infer_points(model, torch, rgb)
+                got = _infer_points(model, torch, rgb, dev)
                 if got is not None:
                     detections.append(got)
                     last_frame = frame

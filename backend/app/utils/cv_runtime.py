@@ -16,6 +16,10 @@ import importlib
 from pathlib import Path
 from typing import Any
 
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 # 权重根目录：app/utils/cv_runtime.py → parents[2] = backend/
 MODELS_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
 
@@ -49,37 +53,63 @@ def resolve_weights(default_name: str, explicit: str = "", hint: str = "") -> Pa
     return path
 
 
-def load_torch_model(path: Path) -> Any:
+def resolve_device(prefer: str = "auto") -> str:
+    """解析 torch 推理设备：auto=有 CUDA 用 cuda 否则 cpu；显式 cuda/cpu 直用。
+
+    无效值回退 auto 语义。供各 cv_* 薄封装统一选择推理设备（无 GPU 环境自动回退 CPU，
+    保证 detect.* 节点 on_failure=skip 降级链在无 GPU 环境照常工作）。
+    """
+    torch = require("torch")
+    want = (prefer or "auto").lower()
+    if want in ("cuda", "gpu"):
+        if torch.cuda.is_available():
+            return "cuda"
+        logger.warning("cv_runtime: 请求 cuda 但 CUDA 不可用，回退 cpu")
+        return "cpu"
+    if want in ("cpu",):
+        return "cpu"
+    # auto / 其他：有 CUDA 用 CUDA，否则 CPU
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def load_torch_model(path: Path, device: str = "auto") -> Any:
     """加载可执行模型：优先 TorchScript，回退 torch.save 完整模型。
 
     约定（TrackNet/球场检测器等自训练权重的统一导出格式）：
         torch.jit.script(model) 或 torch.save(model, path)
     state_dict 裸权重不支持——需先导出为上述格式，报错文案会给出指引。
+
+    device：推理设备（auto=有 CUDA 用 CUDA 否则 CPU；显式 cuda/cpu）。
+    模型加载后 `.to(device).eval()`，推理调用方张量构造时需 `.to(同设备)`。
     """
     torch = require("torch")
+    dev = resolve_device(device)
     import warnings
 
     with warnings.catch_warnings():
         # torch.jit.load 弃用提示（FutureWarning 引导转 torch.export）与加载失败噪音同级降噪
         warnings.filterwarnings("ignore", category=FutureWarning, module=".*torch.jit.*")
         try:
-            return torch.jit.load(str(path)).eval()
+            model = torch.jit.load(
+                str(path), map_location="cpu" if dev == "cpu" else None
+            )
+            return model.to(dev).eval()
         except Exception:  # noqa: BLE001  非 TorchScript，转普通加载
             pass
     try:
-        obj = torch.load(str(path), map_location="cpu", weights_only=False)
+        obj = torch.load(str(path), map_location=dev, weights_only=False)
     except Exception as exc:  # noqa: BLE001
         raise CvUnavailable(
             f"权重 {path} 加载失败（{exc}）；请导出为 TorchScript "
             f"或 torch.save(完整模型) 后重试"
         ) from exc
     if hasattr(obj, "eval") and callable(getattr(obj, "forward", None)):
-        return obj.eval()
+        return obj.to(dev).eval()
     if isinstance(obj, dict) and hasattr(obj.get("model"), "eval"):
-        return obj["model"].eval()
+        return obj["model"].to(dev).eval()
     raise CvUnavailable(
         f"权重 {path} 不是可执行模型（state_dict/裸字典不支持）；"
-        f"请用 torch.jit.script(model) 或 torch.save(model, path) 导出"
+        f"请用 torch.jit.script(model) 或 torch.save(model) 导出"
     )
 
 

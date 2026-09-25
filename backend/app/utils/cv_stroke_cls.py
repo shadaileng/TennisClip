@@ -21,6 +21,7 @@ from app.utils.cv_runtime import (
     CvUnavailable,
     load_torch_model,
     require,
+    resolve_device,
     resolve_weights,
     sample_frames,
 )
@@ -200,13 +201,17 @@ def _classify_dtw(segments: list[Segment], pose: dict, weights: str) -> dict:
 # ---------- cnn 分类 ----------
 
 
-def _classify_cnn(video_path: Path, segments: list[Segment], weights: str) -> dict:
+def _classify_cnn(video_path: Path, segments: list[Segment], weights: str, device: str = "auto") -> dict:
     torch = require("torch")
     np = require("numpy")
-    model = load_torch_model(resolve_weights(
-        DEFAULT_WEIGHTS, weights,
-        hint="放置 3D CNN 导出权重于 backend/data/models/stroke_cnn.pth",
-    ))
+    dev = resolve_device(device)
+    model = load_torch_model(
+        resolve_weights(
+            DEFAULT_WEIGHTS, weights,
+            hint="放置 3D CNN 导出权重于 backend/data/models/stroke_cnn.pth",
+        ),
+        device=dev,
+    )
     classes = [str(c) for c in getattr(model, "classes", DEFAULT_LABELS)]
     preds: dict = {}
     for idx, seg in enumerate(segments):
@@ -216,6 +221,7 @@ def _classify_cnn(video_path: Path, segments: list[Segment], weights: str) -> di
         arr = np.stack([np.array(f, dtype=np.uint8) for f in frames])  # (T, H, W, C)
         tensor = (
             torch.from_numpy(arr).permute(3, 0, 1, 2).unsqueeze(0).float() / 255.0
+            .to(dev)
         )  # (B=1, C, T, H, W)
         with torch.no_grad():
             out = model(tensor)
@@ -234,17 +240,19 @@ def classify_segments(
     pose: dict | None = None,
     classifier: str = "cnn",
     weights: str = "",
+    device: str = "auto",
 ) -> dict[int, tuple[str, float]]:
     """对各高光段分类击球类型，返回 ``{段下标: (label, confidence)}``。
 
     - dtw：需 pose 输入与模板库；cnn：需 torch 与导出权重；
+    - device：cnn 推理设备（auto=有 CUDA 用 CUDA 否则 CPU；cuda/cpu 显式）；
     - 依赖/权重缺失 → 抛 CvUnavailable；dtw 缺 pose → 抛 ValueError（可修复的连线问题）。
     """
     if classifier == "dtw":
         preds = _classify_dtw(segments, pose, weights)
     elif classifier == "cnn":
-        preds = _classify_cnn(video_path, segments, weights)
+        preds = _classify_cnn(video_path, segments, weights, device)
     else:
         raise ValueError(f"未知击球分类器：{classifier}，应为 cnn / dtw")
-    logger.info("cv_stroke_cls: 分类 {}/{} 段（classifier={}）", len(preds), len(segments), classifier)
+    logger.info("cv_stroke_cls: 分类 {}/{} 段（classifier={} device={}）", len(preds), len(segments), classifier, device)
     return preds

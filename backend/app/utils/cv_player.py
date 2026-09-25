@@ -50,11 +50,13 @@ def compute_motion_scores(
     sample_fps: float = 5.0,
     weights: str = "",
     max_frames: int = 0,
+    device: str = "auto",
 ) -> tuple[list[float], float]:
     """YOLOv8 球员检测 + 贪心中心匹配，返回 ``(scores, step)``。
 
     - scores：逐采样帧运动分数（所有球员位移 / 画面对角线），无检测帧为 0；
     - step：采样步长（秒），即 ``1 / sample_fps``（按帧号近似）；
+    - device：推理设备（auto=有 CUDA 用 CUDA 否则 CPU；cuda/cpu 显式）；
     - 依赖 ultralytics/torch/opencv → 抛 CvUnavailable（节点 on_failure=skip 降级）。
     """
     require("ultralytics")
@@ -62,6 +64,14 @@ def compute_motion_scores(
     cv2 = require("cv2")
     from ultralytics import YOLO  # require 成功后才导入
 
+    # device 语义对齐 torch：auto=有 CUDA 用 CUDA 否则 CPU（ultralytics 默认即此行为，
+    # 但显式传入保证跨版本一致 + cpu 可强制回退）
+    import torch
+    want = (device or "auto").lower()
+    if want in ("cpu",):
+        dev = "cpu"
+    else:  # auto / cuda / gpu
+        dev = "0" if torch.cuda.is_available() else "cpu"
     weight_name = weights or _MODEL_SIZES.get(model_size, _MODEL_SIZES["n"])
     try:
         model = YOLO(weight_name)  # 本地缺失时自动下载，离线会抛错
@@ -94,7 +104,7 @@ def compute_motion_scores(
                 diag = (w * w + h * h) ** 0.5
                 try:
                     det = model.predict(frame, verbose=False, classes=[_PERSON_CLASS],
-                                         conf=_DET_CONF)[0]
+                                         conf=_DET_CONF, device=dev)[0]
                 except Exception as exc:  # noqa: BLE001
                     raise CvUnavailable(f"YOLOv8 推理失败：{exc}") from exc
                 boxes = getattr(det, "boxes", None)
