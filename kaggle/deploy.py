@@ -16,6 +16,10 @@
   `kaggle/.env` 的 `KAGGLE_API_TOKEN=你的token`；旧版 `KAGGLE_USER_NAME`/`KAGGLE_API_KEY`
   + `~/.kaggle/kaggle.json` 已逐步弃用（CLI 2.x 默认不再读取 kaggle.json）。
   脚本只做「能跑通吗」预检，不代装 CLI、不代跑 OAuth 流程。
+- kaggle CLI 2.x 的 `datasets create -p <folder>` 只上传 **folder 根下的平铺文件**
+  （默认 dir_mode=skip，子目录不上传），且认新版 `dataset-metadata.json`（旧 meta.json 已不读）。
+  故 deploy.py 组装 dataset/ 为平铺布局（视频 dataset_sample.mp4、权重 dataset_weights/*.pth），
+  上传命令固定 `kaggle datasets create -p dataset`（相对 kaggle/ 根），勿手改 -p 指向。
 - dataset 组装用纯 Python 标准库（shutil/tarfile/json）实现，**不依赖任何 shell 脚本**
   （bash / PowerShell / tar CLI 都不需要），在 bash（Linux/macOS/Git Bash）或 Windows
   原生 PowerShell 里 `python deploy.py` 行为完全一致。
@@ -184,16 +188,16 @@ def check_credentials() -> bool:
     return False
 
 
-def build_dataset() -> bool:
-    """纯 Python 组装 kaggle/dataset/（meta.json + verify.py + app.tar.gz + 视频 + 权重）。
+def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
+    """纯 Python 组装 kaggle/dataset/（平铺布局，kaggle CLI 2.x 默认 dir_mode=skip 可全量上传）：
+    dataset-metadata.json（新版 schema）+ verify.py + app.tar.gz + 根下 mp4 + dataset_weights/。
 
-    与 build_dataset.ps1 同一套布局，但全用 Python 标准库（shutil/tarfile/os）实现，
-    不依赖 powershell / bash / tar CLI——在 bash（Linux/macOS/Git Bash）或 Windows
-    原生 PowerShell 里 `python deploy.py` 都能跑，行为完全一致。
-    build_dataset.ps1 保留供习惯 PowerShell 的用户单独使用。
+    全用 Python 标准库（shutil/tarfile/os）实现，不依赖 powershell / bash / tar CLI——
+    在 bash（Linux/macOS/Git Bash）或 Windows 原生 PowerShell 里 `python deploy.py` 行为一致。
+    build_dataset.ps1 保留供习惯 PowerShell 的用户单独使用（旧 data/weights 布局）。
     """
-    # 0. 清理旧产物（保留 data/weights 用户预填内容，只重建 meta/verify/app.tar.gz）
-    for old in (DATASET / "app.tar.gz", DATASET / "app.zip"):
+    # 0. 清理旧产物（只重建本次要生成的文件；用户手动放的其它 mp4 不动）
+    for old in (DATASET / "app.tar.gz", DATASET / "app.zip", DATASET / "meta.json"):
         old.unlink(missing_ok=True)
 
     # 1. 校验前置
@@ -215,16 +219,25 @@ def build_dataset() -> bool:
     if missing:
         print(f"  [warn] 以下依赖当前 python 未装（Kaggle 侧由 notebook cell 1 pip 安装；本地 dry-run 用 backend/.venv 即可）：{', '.join(missing)}")
 
-    # 2. meta.json
+    # 2. dataset-metadata.json（kaggle CLI 2.x 新版 schema：id/title/licenses；
+    #    旧版 meta.json 的 dataset_name/license 字段 2.x 已不读取）
+    # 注意：kaggle CLI 用 json.load(open(...)) 读 metadata（系统默认编码，中文 Windows=GBK），
+    #       故 metadata 全字段必须 ASCII——中文会 UnicodeDecodeError 导致上传失败。
     DATASET.mkdir(parents=True, exist_ok=True)
-    meta = {
-        "dataset_name": SLUG_DEFAULT,
-        "title": "TennisClip CV 验证包（代码+权重+视频）",
-        "version": 1,
-        "license": "MIT",
+    owner = _kaggle_username() or "YOUR_USERNAME"
+    title = "TennisClip CV verify (code+weights+video)"   # 6-50 字符
+    meta_content = {
+        "id": f"{owner}/{slug}",
+        "title": title,
+        "licenses": [{"name": "CC0-1.0"}],
+        "description": "TennisClip AI - tennis video highlight detection + CV verification "
+                       "(16-node executor graph + TrackNet ball tracking + trajectory overlay). "
+                       "Run verify.py on Kaggle GPU via kaggle_verify.ipynb.",
+        "keywords": ["computer-vision", "tennis", "ball-tracking"],
     }
-    (DATASET / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("  [1/4] meta.json 已生成")
+    (DATASET / "dataset-metadata.json").write_text(json.dumps(meta_content, indent=2), encoding="ascii")
+    print(f"  [1/4] dataset-metadata.json 已生成（id={owner}/{slug}；"
+          + ("owner 为占位 YOUR_USERNAME，请编辑 dataset/dataset-metadata.json 的 id 为 <你的Kaggle用户名>/" + slug + " 再上传" if owner == "YOUR_USERNAME" else "已从本地 kaggle 配置解出") + "）")
 
     # 3. 拷贝 verify.py
     shutil.copy2(verify_py, DATASET / "verify.py")
@@ -240,34 +253,32 @@ def build_dataset() -> bool:
                 tf.add(src_dir, arcname=sub)
     print(f"  [3/4] app.tar.gz 已生成（tarfile，含 app/ + prompts/）：{tar_path}")
 
-    # 5. 拷贝视频与权重（用户已预填 dataset/data、dataset/weights 则跳过；否则从 backend 拷贝）
-    data_dir = DATASET / "data"
-    weights_dir = DATASET / "weights"
+    # 5. 视频与权重（kaggle CLI 2.x 默认 dir_mode=skip 子目录不上传，须平铺在 dataset/ 根）
     src_videos = BACKEND / "data" / "sample_videos"
     src_models = BACKEND / "data" / "models"
 
     if src_videos.is_dir():
-        data_dir.mkdir(parents=True, exist_ok=True)
-        n = 0
-        for f in src_videos.glob("*.mp4"):
-            shutil.copy2(f, data_dir / f.name)
-            n += 1
-        if n:
-            print(f"  [4/4] 视频已拷贝：{n} 个 mp4 → {data_dir}")
+        mp4s = sorted(src_videos.glob("*.mp4"))
+        if mp4s:
+            shutil.copy2(mp4s[0], DATASET / "dataset_sample.mp4")
+            extra = f"（忽略其余 {len(mp4s) - 1} 个，多视频请手动拷到 dataset/ 根下，文件名避开 dataset_sample.mp4）" if len(mp4s) > 1 else ""
+            print(f"  [4/4] 视频已平铺：{mp4s[0].name} → dataset_sample.mp4{extra}")
         else:
-            print("  [warn] backend/data/sample_videos/ 下无 mp4（可手动往 dataset/data/ 放视频）")
+            print("  [warn] backend/data/sample_videos/ 下无 mp4（Kaggle 侧会因「无视频」退出；可手动放 1-5 分钟视频到 dataset/ 根下）")
     else:
-        print(f"  [warn] 未找到 {src_videos}（可手动往 dataset/data/ 放视频）")
+        print(f"  [warn] 未找到 {src_videos}（可手动放视频到 dataset/ 根下）")
 
+    weights_dir = DATASET / "dataset_weights"
     if src_models.is_dir():
-        weights_dir.mkdir(parents=True, exist_ok=True)
-        pths = list(src_models.glob("*.pth"))
+        pths = sorted(src_models.glob("*.pth"))
         if pths:
+            weights_dir.mkdir(parents=True, exist_ok=True)
             for f in pths:
                 shutil.copy2(f, weights_dir / f.name)
-            print(f"  权重已拷贝：{len(pths)} 个 .pth → {weights_dir}")
+            print(f"     权重已平铺：{[f.name for f in pths]} → dataset_weights/（Kaggle 侧 verify.py 重命名回 weights/）")
         else:
-            print(f"  [warn] 未找到 {src_models}/*.pth（先跑 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth）")
+            print("  [warn] 未找到 *.pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
+            print("     要真跑推理，先 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth 放入 backend/data/models/。")
 
     # 6. 提示
     total = sum(f.stat().st_size for f in DATASET.rglob("*") if f.is_file())
@@ -276,29 +287,55 @@ def build_dataset() -> bool:
 
 
 def verify_dataset_content() -> bool:
-    """组装产物完整性：meta.json + verify.py + app 包 + (权重可选) + (视频可选)。"""
+    """dataset/ 内容完整性：metadata + verify.py + app 包 + 视频/权重（平铺布局）。"""
     ok = True
-    if not DATASET.joinpath("meta.json").is_file():
-        print("  [FAIL] 缺 meta.json"); ok = False
+    if not DATASET.joinpath("dataset-metadata.json").is_file():
+        print("  [FAIL] 缺 dataset-metadata.json（kaggle CLI 2.x 认的新版 metadata；旧 meta.json 已不读）"); ok = False
     if not DATASET.joinpath("verify.py").is_file():
         print("  [FAIL] 缺 verify.py"); ok = False
     if not (DATASET.joinpath("app.tar.gz").is_file() or DATASET.joinpath("app.zip").is_file()):
         print("  [FAIL] 缺 app.tar.gz / app.zip（app 代码包）"); ok = False
-    vids = list(DATASET.glob("data/*.mp4")) if DATASET.joinpath("data").is_dir() else []
-    pths = list(DATASET.glob("weights/*.pth")) if DATASET.joinpath("weights").is_dir() else []
+    vids = [f for f in DATASET.glob("*.mp4")]
+    pths = list(DATASET.joinpath("dataset_weights").glob("*.pth")) if DATASET.joinpath("dataset_weights").is_dir() else []
     if not vids:
-        print("  [warn] data/ 下无 mp4 视频——Kaggle 跑起来会因「无视频」退出。")
-        print("     先往 kaggle/dataset/data/ 放 1-5 分钟网球视频再重跑（或 backend/data/sample_videos/）")
+        print("  [warn] dataset/ 根下无 mp4 视频——Kaggle 跑起来会因「无视频」退出。")
+        print("     先放 1-5 分钟网球视频到 kaggle/dataset/ 根下（文件名避开 dataset_sample.mp4 可多放）再重跑")
     if not pths:
-        print("  [warn] weights/ 下无 .pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
-        print("     要真跑推理，先 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth 放入。")
+        print("  [warn] dataset_weights/ 下无 .pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
+        print("     要真跑推理，先 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth 放入 backend/data/models/。")
     if ok:
-        print(f"  [ok] dataset 内容就绪（视频 {len(vids)} 个 / 权重 {len(pths)} 个）")
+        print(f"  [ok] dataset 内容就绪（平铺布局：视频 {len(vids)} 个 / 权重 {len(pths)} 个，kaggle CLI 2.x dir_mode=skip 可全量上传）")
     return ok
 
 
+def _kaggle_username() -> str | None:
+    """Kaggle 用户名（新版 CLI token 模式不一定能从本地配置解出；解不出时返回 None，
+    由调用方提示用户手填 dataset-metadata.json 的 id）。"""
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore
+        api = KaggleApi()
+        user = api.config_values.get("username") or api.config_values.get("user")
+        if isinstance(user, str) and user:
+            return user
+    except Exception:
+        pass
+    # 旧版 kaggle.json 兜底
+    kj = Path.home() / ".kaggle" / "kaggle.json"
+    if kj.is_file():
+        try:
+            return json.loads(kj.read_text(encoding="utf-8")).get("username")
+        except (OSError, json.JSONDecodeError):
+            pass
+    return None
+
+
 def upload_dataset(slug: str) -> bool:
-    """kaggle datasets create -p dataset（dataset/ 根须有 meta.json）。"""
+    """kaggle datasets create -p .（在 kaggle/ 根下跑；CLI 认 dataset/ 内的 dataset-metadata.json）。
+
+    kaggle CLI 2.x 的 -p 指向「含 dataset-metadata.json 的文件夹」，且默认 dir_mode=skip
+    只上传该文件夹根下的平铺文件（子目录不传）——build_dataset 已产出平铺布局。
+    这里 cwd=ROOT 跑 `kaggle datasets create -p dataset`。
+    """
     print(f"  上传 dataset -> {slug}")
     code, out, err = sh(["kaggle", "datasets", "create", "-p", "dataset"], cwd=ROOT, env=kaggle_env())
     if out and out.strip():
@@ -306,18 +343,18 @@ def upload_dataset(slug: str) -> bool:
     if err and err.strip():
         print(err)
     if code != 0:
-        print(f"  [FAIL] 上传失败（退出码 {code}）")
         combined = (out + "\n" + err).lower()
+        print(f"  [FAIL] 上传失败（退出码 {code}）")
+        if "invalid folder" in combined:
+            print(f"     原因：{DATASET} 目录不存在——先跑：python {ROOT / 'deploy.py'} --skip-upload 组装，再重传。")
+        if "metadata" in combined:
+            print(f"     metadata 问题：检查 {DATASET / 'dataset-metadata.json'}（kaggle CLI 2.x 新版 schema：")
+            print(f"     id 须为 <你的用户名>/{slug}、title 6-50 字符、licenses 恰 1 项；旧 meta.json 已不读）")
         if "authentication" in combined or "auth" in combined:
-            print("     凭据问题（kaggle CLI 2.x 需要新版 token，旧版 kaggle.json 不再读取）：")
-            print(f"       1) 运行 kaggle auth login（浏览器授权，token 缓存到 ~/.kaggle/access_token）")
+            print("     凭据问题（kaggle CLI 2.x 需要新版 token）：")
+            print("       1) 运行 kaggle auth login（浏览器授权，token 缓存到 ~/.kaggle/access_token）")
             print(f"       2) 或编辑 {DOTENV_NAME} 写入 KAGGLE_API_TOKEN=你的token 后重跑本脚本")
-            print("     手动上传前需先完成上述任一，再运行：")
-            print(f"       kaggle datasets create -p {DATASET}")
-        else:
-            print("     常见原因：5GB 超限/slug 被占用。改 slug 重传：")
-            print(f"     1) 编辑 {DATASET / 'meta.json'} 的 dataset_name 或传参 --slug")
-            print(f"     2) 重跑：python {ROOT / 'deploy.py'} --slug <新slug>")
+        print(f"     手动重传：cd {ROOT} && kaggle datasets create -p dataset")
         return False
     print(f"  [ok] dataset 已上传 Kaggle：{slug}")
     return True
@@ -421,9 +458,9 @@ def main() -> int:
         return 1
 
     # 3) 组装 dataset
-    next_step("组装 kaggle/dataset/（纯 Python：shutil/tarfile，无 shell 依赖）")
-    if not build_dataset():
-        print("\n终止：dataset 组装失败。检查上方报错（meta.json/verify.py/app.tar.gz/视频/权重）。")
+    next_step("组装 kaggle/dataset/（纯 Python：shutil/tarfile，平铺布局，无 shell 依赖）")
+    if not build_dataset(slug=args.slug):
+        print("\n终止：dataset 组装失败。检查上方报错（dataset-metadata.json/verify.py/app.tar.gz/视频/权重）。")
         return 1
 
     # 4) 内容完整性
@@ -431,8 +468,15 @@ def main() -> int:
     verify_dataset_content()
 
     if args.skip_upload:
-        print("\n[完成] --skip-upload：只组装本地 dataset，未上传。")
-        print(f"       手动上传：kaggle datasets create -p {DATASET}")
+        owner = _kaggle_username()
+        if not owner:
+            print("\n[完成] --skip-upload：只组装本地 dataset，未上传。")
+            print(f"       手动上传前：1) 配凭据（kaggle auth login 或 {DOTENV_NAME} 写 KAGGLE_API_TOKEN）")
+            print("       2) 编辑 dataset/dataset-metadata.json 的 id 为 <你的Kaggle用户名>/" + args.slug)
+            print(f"       3) 手动上传：cd {ROOT} && kaggle datasets create -p dataset")
+        else:
+            print("\n[完成] --skip-upload：只组装本地 dataset，未上传。")
+            print(f"       手动上传：cd {ROOT} && kaggle datasets create -p dataset")
         return 0
 
     # 5) 上传 dataset

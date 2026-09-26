@@ -11,8 +11,10 @@
   逻辑（约 150 行），落库部分替换为写 JSON 文件到 /kaggle/working/。
   这样验证的是「节点算法 + 图调度 + 降级契约」的正确性，而非 DB 持久化。
 - **权重/视频走 dataset**：Kaggle 上路径固定为 /kaggle/input/{slug}/，
-  本脚本用 ``--input`` 指向 dataset 根，``cv_runtime.MODELS_DIR`` 指向 ``weights/``
-  （使 ``resolve_weights`` 缺省命中 ``tracknet.pth``），``data/*.mp4`` 自动发现。
+  本脚本用 ``--input`` 指向 dataset 根。两种布局都认：
+  - 平铺（kaggle CLI 2.x 默认 dir_mode=skip 上传后的形态）：根下 *.mp4 + dataset_weights/*.pth
+  - 规整（本地 dry-run 习惯）：data/*.mp4 + weights/*.pth
+  平铺形态开跑前由 ``normalize_input_layout`` 幂等规整为 data/ + weights/。
 
 Kaggle 侧运行（notebook cell）：
     !pip install -q loguru pydantic pyyaml python-dotenv numpy opencv-python-headless
@@ -27,6 +29,7 @@ Kaggle 侧运行（notebook cell）：
 
 本地 dry-run（无 GPU/无真实权重，验证 import 闭包 + 图编译 + PureExecutor 构建）：
     python kaggle/verify.py --dry-run --repo backend --input kaggle/dataset --out kaggle/dataset/out
+    （--input 认 data/ 布局；干跑在布局规整之前退出，不动 dataset/ 目录）
 
 依赖闭包（全部随 backend/{app,prompts} 打包，Kaggle 上 pip 装第三方即可）：
     loguru / pydantic / pyyaml / python-dotenv / numpy / cv2 / torch /
@@ -43,6 +46,18 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# 模块级 logger：main() 内 get_logger 后赋值；normalize_input_layout 等模块函数复用。
+# 取 logger 前 app.utils.logger 未导入则先落 print 兜底（Kaggle/本地任意环境可用）。
+logger = None
+
+
+def _log(msg: str, *args) -> None:
+    """logger.info 的模块级兜底：logger 未初始化（main() 尚未跑到 get_logger）时走 print。"""
+    if logger is not None:
+        logger.info(msg, *args)
+    else:
+        print("[verify] " + msg.format(*args) if args else "[verify] " + msg)
 
 # ---------------------------------------------------------------------------
 # 路径准备：把仓库 backend/ 加入 sys.path，使 `import app.*` 可用
@@ -353,16 +368,45 @@ def build_cv_debug_graph() -> "WorkflowGraph":
 # ---------------------------------------------------------------------------
 
 def find_weights(input_root: Path) -> Path:
-    """在 dataset 的 weights/ 下找 tracknet.pth。"""
-    cand = input_root / "weights"
+    """在 dataset 的 weights/ 或 dataset_weights/ 下找 tracknet.pth（平铺布局兼容）。"""
+    cand = input_root / "dataset_weights"
+    if not cand.is_dir():
+        cand = input_root / "weights"
     pth = list(cand.glob("*.pth")) + list(cand.glob("*.pt")) if cand.is_dir() else []
     if not pth:
         raise SystemExit(f"[verify] 未找到 TrackNet 权重：{cand}/*.pth")
     return pth[0]
 
 
+def normalize_input_layout(input_root: Path) -> None:
+    """Kaggle dataset 平铺布局规整（kaggle CLI 2.x dir_mode=skip 上传后的形态）：
+    - 根下 *.mp4（dataset_sample.mp4 等）→ data/
+    - dataset_weights/ → weights/（verify.py 约定读 weights/）
+    幂等：已规整过的目录不动；本地 dry-run 的 data/ weights/ 布局不受影响。
+    """
+    data_dir = input_root / "data"
+    vids = [f for f in input_root.glob("*.mp4")]
+    if vids:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        for f in vids:
+            f.rename(data_dir / f.name)
+        _log("verify: 根下 {} 个 mp4 → data/", len(vids))
+    dw = input_root / "dataset_weights"
+    if dw.is_dir():
+        target = input_root / "weights"
+        target.mkdir(parents=True, exist_ok=True)
+        for f in dw.iterdir():
+            if f.is_file():
+                f.rename(target / f.name)
+        dw.rmdir()
+        _log("verify: dataset_weights/ → weights/")
+
+
 def find_videos(input_root: Path) -> list[Path]:
+    """dataset 根下 data/ 的 mp4；平铺布局（根下 *.mp4）也认。"""
     vids = list((input_root / "data").glob("*.mp4")) if (input_root / "data").is_dir() else []
+    if not vids:
+        vids = list(input_root.glob("*.mp4"))
     return sorted(vids)
 
 
@@ -398,6 +442,7 @@ def main():
     from app.models import TaskResult
     from app.utils.logger import get_logger
 
+    global logger
     logger = get_logger(__name__)
 
     # 内存版 AppConfig（Kaggle 无 config.yaml，用默认值 = config.yaml 缺省）
@@ -429,7 +474,10 @@ def main():
 
     videos = [Path(args.video)] if args.video else find_videos(input_root)
     if not videos:
-        raise SystemExit(f"[verify] {input_root}/data/ 下无 mp4 视频")
+        raise SystemExit(f"[verify] {input_root}/data/ 下无 mp4 视频（平铺布局也可放 {input_root}/*.mp4）")
+
+    # Kaggle dataset 平铺布局规整（幂等）：根下 mp4 → data/、dataset_weights/ → weights/
+    normalize_input_layout(input_root)
 
     weight_file = find_weights(input_root)
     logger.info("verify: 权重={} 设备={} 视频={} 张图", weight_file.name, args.device, len(videos))
