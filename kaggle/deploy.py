@@ -11,8 +11,11 @@
   只负责「把代码/权重/视频推上去 + 把 notebook 推上去」这一段。
 - 拉取结果（kaggle kernels pull）是运行完之后的动作，脚本末尾打印命令供用户执行，
   不自动 pull（Kaggle 免费 GPU 运行 10 分钟 ~ 2 小时，脚本跑完时 notebook 还没跑完）。
-- kaggle CLI 必须已安装且已配凭据（kaggle/.env 或 $KAGGLE_USER_NAME/$KAGGLE_API_KEY 或 ~/.kaggle/kaggle.json）；
-  脚本只做「能跑通吗」预检，不代装 CLI。
+- kaggle CLI 必须已安装且已配凭据。新版 CLI（≥1.6）推荐用 OAuth access token：
+  `kaggle auth login`（浏览器授权，token 缓存到 ~/.kaggle/access_token）或写
+  `kaggle/.env` 的 `KAGGLE_API_TOKEN=你的token`；旧版 `KAGGLE_USER_NAME`/`KAGGLE_API_KEY`
+  + `~/.kaggle/kaggle.json` 已逐步弃用（CLI 2.x 默认不再读取 kaggle.json）。
+  脚本只做「能跑通吗」预检，不代装 CLI、不代跑 OAuth 流程。
 - dataset 组装用纯 Python 标准库（shutil/tarfile/json）实现，**不依赖任何 shell 脚本**
   （bash / PowerShell / tar CLI 都不需要），在 bash（Linux/macOS/Git Bash）或 Windows
   原生 PowerShell 里 `python deploy.py` 行为完全一致。
@@ -81,8 +84,10 @@ def load_dotenv() -> dict:
 def kaggle_env() -> dict:
     """kaggle CLI 子进程环境：进程环境变量 + kaggle/.env 补齐（环境变量优先）。
 
-    kaggle CLI 认 KAGGLE_USER_NAME / KAGGLE_API_KEY，或 ~/.kaggle/kaggle.json。
-    这里把 .env 的值注进子进程 env，使脚本在「.env 配凭据、机器无 kaggle.json」时也能上传。
+    新版 kaggle CLI（≥1.6）认：
+      - KAGGLE_API_TOKEN（OAuth access token，或 kaggle auth login 缓存）
+      - 旧版 KAGGLE_USER_NAME / KAGGLE_API_KEY + ~/.kaggle/kaggle.json（逐步弃用）
+    这里把 .env 的值注进子进程 env，使脚本在「.env 配 token、机器无 access_token」时也能上传。
     """
     env = dict(os.environ)
     file_values = load_dotenv()
@@ -120,37 +125,61 @@ def check_kaggle_cli() -> bool:
     code, out, err = sh(["kaggle", "--version"])
     if code != 0:
         print("  [FAIL] 未找到 kaggle CLI（" + (err.strip() or out.strip() or "命令不存在") + "）")
-        print("  请先：pip install kaggle   并配凭据：")
-        print("    Windows: mkdir $HOME\\.kaggle  把 kaggle.json 放里面（kaggle.com 账户 Create New API Token）")
-        print("    或设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY，或写 kaggle/.env")
+        print("  请先：pip install kaggle   再配凭据：")
+        print("    新版（推荐）：kaggle auth login（浏览器授权，token 缓存 ~/.kaggle/access_token）")
+        print("    或写 kaggle/.env：KAGGLE_API_TOKEN=你的token")
+        print("    旧版：KAGGLE_USER_NAME + KAGGLE_API_KEY + ~/.kaggle/kaggle.json")
         return False
     print(f"  [ok] kaggle CLI {out.strip()}")
     return True
 
 
 def check_credentials() -> bool:
-    """凭据预检：环境变量 > kaggle/.env > ~/.kaggle/kaggle.json；不强制（上传时才真正用到）。"""
-    has_env = bool(os.environ.get("KAGGLE_USER_NAME") and os.environ.get("KAGGLE_API_KEY"))
+    """凭据预检（新版 kaggle CLI）：识别以下任一来源——
+       1) 环境变量 KAGGLE_API_TOKEN（新版 OAuth access token）
+       2) ~/.kaggle/access_token 文件（kaggle auth login 后生成）
+       3) 环境变量 KAGGLE_USER_NAME+KAGGLE_API_KEY（旧版，逐步弃用）
+       4) kaggle/.env 文件内任一上述键
+       5) ~/.kaggle/kaggle.json（旧版 user:pass，CLI 2.x 默认不再读取）
+
+    预检只判断「有无可识别凭据」；上传时 deploy.py 子进程注入 kaggle_env()。
+    """
+    home = Path.home()
+    has_token_env = bool(os.environ.get("KAGGLE_API_TOKEN"))
+    has_token_file = (home / ".kaggle" / "access_token").is_file()
+    has_old_env = bool(os.environ.get("KAGGLE_USER_NAME") and os.environ.get("KAGGLE_API_KEY"))
     file_values = load_dotenv()
-    has_dotenv = DOTENV_FILE.is_file() and bool(file_values.get("KAGGLE_USER_NAME"))
-    has_file = Path.home().joinpath(".kaggle", "kaggle.json").exists()
-    if has_env:
-        print("  [ok] 凭据来源：环境变量 KAGGLE_USER_NAME/KAGGLE_API_KEY")
+    has_dotenv_token = bool(file_values.get("KAGGLE_API_TOKEN"))
+    has_dotenv_old = bool(file_values.get("KAGGLE_USER_NAME"))
+    has_kaggle_json = (home / ".kaggle" / "kaggle.json").is_file()
+
+    if has_token_env:
+        print("  [ok] 凭据来源：环境变量 KAGGLE_API_TOKEN（新版）")
         return True
-    if has_dotenv:
-        print(f"  [ok] 凭据来源：{DOTENV_FILE.name}（KAGGLE_USER_NAME/KAGGLE_API_KEY，将注入 kaggle CLI 子进程）")
+    if has_token_file:
+        print(f"  [ok] 凭据来源：{home / '.kaggle' / 'access_token'}（kaggle auth login 缓存）")
         return True
-    if has_file:
-        print("  [ok] 凭据来源：文件 ~/.kaggle/kaggle.json")
+    if has_dotenv_token:
+        print(f"  [ok] 凭据来源：{DOTENV_FILE.name} 的 KAGGLE_API_TOKEN（将注入 kaggle CLI 子进程）")
         return True
-    print("  [warn] 未检测到 kaggle 凭据（无环境变量、无 kaggle/.env、无 ~/.kaggle/kaggle.json）")
-    print(f"    三种方式任选其一：")
-    print(f"      A. 写 {DOTENV_NAME}（推荐，.gitignore 已忽略不入库）：")
-    print(f"         KAGGLE_USER_NAME=你的用户名")
-    print(f"         KAGGLE_API_KEY=你的APIKey")
-    print(f"         （kaggle.com 账户 Create New API Token 获取）")
-    print(f"      B. 设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY")
-    print(f"      C. 写 ~/.kaggle/kaggle.json")
+    if has_old_env:
+        print("  [ok] 凭据来源：环境变量 KAGGLE_USER_NAME/KAGGLE_API_KEY（旧版）")
+        return True
+    if has_dotenv_old:
+        print(f"  [ok] 凭据来源：{DOTENV_FILE.name} 的 KAGGLE_USER_NAME/KAGGLE_API_KEY（旧版）")
+        return True
+    if has_kaggle_json:
+        print(f"  [ok] 凭据来源：{home / '.kaggle' / 'kaggle.json'}（旧版；kaggle CLI 2.x 可能已不再读取，建议改 token）")
+        return True
+
+    print("  [warn] 未检测到 kaggle 凭据（无 KAGGLE_API_TOKEN、无 access_token、无旧版 user/key）")
+    print(f"    推荐（新版 CLI）三选一：")
+    print(f"      A. 运行一次：kaggle auth login   （浏览器授权，token 缓存到 ~/.kaggle/access_token）")
+    print(f"      B. 写 {DOTENV_NAME}（.gitignore 已忽略不入库）：")
+    print(f"         KAGGLE_API_TOKEN=你的token")
+    print(f"         （kaggle.com → Settings → API → Generate New Token）")
+    print(f"      C. 设环境变量 KAGGLE_API_TOKEN")
+    print(f"    旧版（逐步弃用）：KAGGLE_USER_NAME + KAGGLE_API_KEY + ~/.kaggle/kaggle.json")
     print("    上传步骤会失败。先配凭据再重跑，或先 --skip-upload 只组装本地。")
     return False
 
@@ -278,9 +307,17 @@ def upload_dataset(slug: str) -> bool:
         print(err)
     if code != 0:
         print(f"  [FAIL] 上传失败（退出码 {code}）")
-        print("     常见原因：凭据缺失/5GB 超限/slug 被占用。改 slug 重传：")
-        print(f"     1) 编辑 {DATASET / 'meta.json'} 的 dataset_name 或传参 --slug")
-        print(f"     2) 重跑：python {ROOT / 'deploy.py'} --slug <新slug>")
+        combined = (out + "\n" + err).lower()
+        if "authentication" in combined or "auth" in combined:
+            print("     凭据问题（kaggle CLI 2.x 需要新版 token，旧版 kaggle.json 不再读取）：")
+            print(f"       1) 运行 kaggle auth login（浏览器授权，token 缓存到 ~/.kaggle/access_token）")
+            print(f"       2) 或编辑 {DOTENV_NAME} 写入 KAGGLE_API_TOKEN=你的token 后重跑本脚本")
+            print("     手动上传前需先完成上述任一，再运行：")
+            print(f"       kaggle datasets create -p {DATASET}")
+        else:
+            print("     常见原因：5GB 超限/slug 被占用。改 slug 重传：")
+            print(f"     1) 编辑 {DATASET / 'meta.json'} 的 dataset_name 或传参 --slug")
+            print(f"     2) 重跑：python {ROOT / 'deploy.py'} --slug <新slug>")
         return False
     print(f"  [ok] dataset 已上传 Kaggle：{slug}")
     return True
@@ -297,7 +334,10 @@ def push_notebook(kernel_slug: str) -> bool:
     if out and out.strip():
         print(out)
     if code != 0:
-        print(f"  [FAIL] notebook 推送失败（退出码 {code}）：{(err or '').strip()[:400]}")
+        combined = (out + "\n" + err).lower()
+        print(f"  [FAIL] notebook 推送失败（退出码 {code}）：{(err or out).strip()[:400]}")
+        if "authentication" in combined or "auth" in combined:
+            print("     凭据问题：运行 kaggle auth login 或写 kaggle/.env 的 KAGGLE_API_TOKEN，再重跑。")
         return False
     print(f"  [ok] notebook 已推送")
     print(f"    在 https://www.kaggle.com/kernels 搜 '{kernel_slug}' 找到")

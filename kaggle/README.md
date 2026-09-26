@@ -56,15 +56,12 @@ kaggle/
 ## 快速开始（本地准备 → Kaggle 推送 → 下载结果）
 
 ```bash
-# 0. 前置：装 kaggle CLI + 配凭据（三选一，deploy.py 按「环境变量 > kaggle/.env > ~/.kaggle/kaggle.json」优先级识别）
+# 0. 前置：装 kaggle CLI + 配凭据（新版 CLI 推荐 OAuth access token，三选一；deploy.py 自动识别）
 pip install kaggle
-#   方式 A（推荐，随仓库不入库）：kaggle/.env（.gitignore 已忽略）
-#     创建 kaggle/.env 写入：
-#       KAGGLE_USER_NAME=你的用户名
-#       KAGGLE_API_KEY=你的APIKey
-#     （kaggle.com → 账户 → Create New API Token）
-#   方式 B：设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY
-#   方式 C：~/.kaggle/kaggle.json
+#   方式 A（推荐，零管理）：kaggle auth login（浏览器授权，token 缓存到 ~/.kaggle/access_token）
+#   方式 B（随仓库不入库）：kaggle/.env（.gitignore 已忽略）写入 KAGGLE_API_TOKEN=你的token
+#   方式 C：设环境变量 KAGGLE_API_TOKEN
+#   （旧版 KAGGLE_USER_NAME + KAGGLE_API_KEY + ~/.kaggle/kaggle.json 已逐步弃用，CLI 2.x 默认不再读取）
 
 # 1. 本地准备（可选）：往 dataset/data、dataset/weights 预填视频/权重
 #    不预填也行——deploy.py 会自动从 backend/data/sample_videos、backend/data/models 拷贝
