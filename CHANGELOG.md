@@ -8,7 +8,7 @@
 
 ### Added
 
-- Kaggle GPU 验证包（v0.25.0）：新增 `kaggle/` 目录（方案 14 Step 2/6）——`verify.py` 完整移植 16 节点 executor 图（`PureExecutor` 与 `app.workflow.executor.Executor` 同构，落库替换为写 JSON 到 `/kaggle/working/`，代码零分叉）+ `build_dataset.ps1` 一键打包 `backend/{app,prompts}` → `app.tar.gz` + 权重 + 视频 + `kaggle_verify.ipynb`（T4/P100 + Internet + input dataset 模板）+ `README.md`（推送/下载/人工核对流程）；`loguru` 新增 `TENNISCLIP_LOG_ENQUEUE` 开关（受限环境关 enqueue，Windows 沙箱 import 不崩）；本地 dry-run 验证通过（假权重 → `CvUnavailable` → `on_failure=skip` 级联跳过 n4–n8，`result.json` 正确落盘）
+- Kaggle GPU 验证包（v0.25.0）：新增 `kaggle/` 目录（方案 14 Step 2/6）——`verify.py` 完整移植 16 节点 executor 图（`PureExecutor` 与 `app.workflow.executor.Executor` 同构，落库替换为写 JSON 到 `/kaggle/working/`，代码零分叉）+ `build_dataset.ps1` 一键打包 `backend/{app,prompts}` → `app.tar.gz` + 权重 + 视频 + `kaggle_verify.ipynb`（T4/P100 + Internet + input dataset 模板）+ `deploy.py` 一键部署（Python 标准库、无第三方依赖，调 kaggle CLI）：检查 CLI/凭据 → 组装 dataset → `kaggle datasets create` 上传 → `kaggle kernels push` 推 notebook → 打印 Kaggle 侧人工设置与结果拉取命令（`--skip-upload`/`--allow-missing-cli` 支持只组装本地）+ `README.md`（推送/下载/人工核对流程）；`loguru` 新增 `TENNISCLIP_LOG_ENQUEUE` 开关（受限环境关 enqueue，Windows 沙箱 import 不崩）；本地 dry-run 验证通过（假权重 → `CvUnavailable` → `on_failure=skip` 级联跳过 n4–n8，`result.json` 正确落盘）
 
 
 ## [0.24.0] - 2026-09-25

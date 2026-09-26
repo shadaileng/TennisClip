@@ -64,6 +64,7 @@ TennisClip/
 │   ├── verify.py             # 16 节点 executor 完整移植入口（PureExecutor，落 JSON 不连 DB）
 │   ├── build_dataset.ps1     # 一键打包 backend/{app,prompts} → app.tar.gz + 权重 + 视频
 │   ├── kaggle_verify.ipynb   # Notebook 模板（T4/P100 + Internet + input dataset）
+│   ├── deploy.py             # 一键部署（Python 标准库，调 kaggle CLI）：组装+datasets create+kernels push
 │   ├── README.md             # 推送/下载/人工核对流程
 │   └── dataset/              # 本地组装区（.gitignore 忽略；视频/权重/产物不入库）
 ├── .codebuddy/skills/        # 项目 skills（docs-manage / git-commit）

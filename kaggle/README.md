@@ -12,7 +12,8 @@ kaggle/
 ├── README.md              # 本文件：使用说明
 ├── verify.py              # 验证入口（Kaggle Notebook 里 `python verify.py ...` 跑）
 ├── kaggle_verify.ipynb    # Notebook 模板（已配 P100/T4 + Internet + 输入 dataset）
-├── build_dataset.ps1      # 一键组装：backend/app + 权重 + 视频 + verify.py → kaggle_dataset.zip
+├── build_dataset.ps1      # 一键组装：backend/{app,prompts} + 权重 + 视频 + verify.py → dataset/
+├── deploy.py              # 一键部署（Python 标准库，调 kaggle CLI）：组装+datasets create+kernels push
 └── dataset/               # 本地组装区（.gitignore 忽略，不入库）
     ├── data/              #   待验证视频（1–5 分钟，720p/30fps 更佳）
     ├── weights/           #   TrackNet 权重（tracknet.pth，TorchScript 或 torch.save 完整模型）
@@ -59,29 +60,31 @@ pip install kaggle
 mkdir -Force $HOME\.kaggle
 # 把 kaggle.json（从 kaggle.com → 账户 → Create New API Token）放到 $HOME\.kaggle\kaggle.json
 
-# 1. 本地准备：视频 + 权重
+# 1. 本地准备：视频 + 权重（可选，缺了 Kaggle 侧 TrackNet 级联跳过但链路仍通）
 cd kaggle
 New-Item -ItemType Directory -Force dataset\data, dataset\weights
 Copy-Item ..\backend\data\sample_videos\*.mp4 dataset\data\
 Copy-Item ..\backend\data\models\tracknet.pth dataset\weights\
 #    若权重缺失，本地先跑 backend/scripts/fetch_tracknet_weights.py 生成
 
-# 2. 组装 dataset 包（打包 backend/app → repo/app.tar.gz + 视频 + 权重 + verify.py + meta.json）
-powershell -File .\build_dataset.ps1
-#    产物：kaggle_dataset.zip（dataset 目录，含 meta.json）
+# 2. 一键部署（组装 + 上传 dataset + 推 notebook，全自动）
+python deploy.py
+#    等价于手动：powershell -File .\build_dataset.ps1
+#              → kaggle datasets create -p dataset
+#              → kaggle kernels push -p .
+#    只组装本地不上传：python deploy.py --skip-upload --allow-missing-cli
 
-# 3. 创建 Kaggle dataset（上限 5GB）
-kaggle datasets create -p dataset
-#    记下 dataset slug：{username}/kaggle-tennisclip-verify
-
-# 4. 推送 notebook
-kaggle kernels push -p .
-#    在 https://kaggle.com/kernels 找到 {username}/kaggle-tennisclip-verify：
+# 3. Kaggle 侧人工（deploy.py 末尾会打印）：
+#    https://www.kaggle.com/kernels 搜 kaggle-tennisclip-verify
 #    Settings → Input Data 勾 {username}/kaggle-tennisclip-verify
 #    Settings → Accelerator 选 T4/P100
 #    Settings → Internet 勾 ON（CLIP 需下载 HF 权重；GPU 配额按开联网计）
 #    点 "Run All" 运行
 
+# 4. 运行完成后拉结果
+kaggle kernels pull {username}/kaggle-tennisclip-verify -p out\
+#    拿到 out\kaggle-00\track_overlay.mp4 + result.json + summary.json
+```
 # 5. 下载结果
 kaggle kernels pull {username}/kaggle-tennisclip-verify -p out\
 #    拿到 out\kaggle-00\track_overlay.mp4 + result.json + summary.json
