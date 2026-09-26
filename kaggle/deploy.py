@@ -3,7 +3,7 @@
 
 把「CV 增强调试工作流」完整移植到 Kaggle 免费 GPU 的整条链路压成一条命令：
 
-    检查凭据 → 组装 dataset（调 build_dataset.ps1）→ kaggle datasets create
+    检查凭据 → 组装 dataset（经 bash 环境调 build_dataset.ps1）→ kaggle datasets create
     → 推 notebook（kaggle kernels push）→ 打印「Kaggle 侧要做什么 + 完成后怎么拉结果」
 
 设计边界：
@@ -11,8 +11,11 @@
   只负责「把代码/权重/视频推上去 + 把 notebook 推上去」这一段。
 - 拉取结果（kaggle kernels pull）是运行完之后的动作，脚本末尾打印命令供用户执行，
   不自动 pull（Kaggle 免费 GPU 运行 10 分钟 ~ 2 小时，脚本跑完时 notebook 还没跑完）。
-- kaggle CLI 必须已安装且已配凭据（~/.kaggle/kaggle.json 或 $KAGGLE_USER_NAME/$KAGGLE_API_KEY）；
+- kaggle CLI 必须已安装且已配凭据（kaggle/.env 或 $KAGGLE_USER_NAME/$KAGGLE_API_KEY 或 ~/.kaggle/kaggle.json）；
   脚本只做「能跑通吗」预检，不代装 CLI。
+- 运行环境以 bash 为主（Linux/macOS/Git Bash）：组装 dataset 优先经 bash -c 调
+  build_dataset.ps1（cmd 兼容层）；bash 不可用/失败时退回 PowerShell 直接调 ps1。
+  kaggle CLI 子命令（datasets create / kernels push）在任意 shell 内都可用。
 
 用法：
     python kaggle/deploy.py                # 全流程（默认）
@@ -98,8 +101,9 @@ def sh(cmd: list[str], cwd: Path | None = None, dry: bool = False, env: dict | N
         r = subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None,
                            capture_output=True, text=True, timeout=600, env=env)
         return (r.returncode, r.stdout, r.stderr)
-    except FileNotFoundError:
-        return (127, "", "命令不存在：" + cmd[0])
+    except FileNotFoundError as e:
+        missing = getattr(e, "filename") or str(cmd[0])
+        return (127, "", f"命令不存在：{missing}")
     except subprocess.TimeoutExpired:
         return (124, "", "超时")
 
@@ -149,26 +153,65 @@ def check_credentials() -> bool:
     return False
 
 
+def find_bash() -> str | None:
+    """定位可用的 bash 可执行文件。
+
+    策略：PATH 上的 bash 优先；若 PATH 上的 bash 跑不通（如 WindowsApps 的 WSL
+    转发器指向未装发行版），依次探测 Git Bash 常见安装路径。
+    """
+    candidates: list[str] = []
+    on_path = shutil.which("bash")
+    if on_path:
+        candidates.append(on_path)
+    candidates += [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ]
+    for c in candidates:
+        if not os.path.isfile(c):
+            continue
+        try:
+            r = subprocess.run([c, "--version"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if r.returncode == 0:
+            return c
+    return None
+
+
 def build_dataset() -> bool:
-    """调 build_dataset.ps1 组装 kaggle/dataset/（含 verify.py/app.tar.gz/权重/视频/meta.json）。"""
+    """调 build_dataset.ps1 组装 kaggle/dataset/（含 verify.py/app.tar.gz/权重/视频/meta.json）。
+
+    优先用 bash 环境跑（Git Bash 的 cmd 兼容层 / Linux / macOS）；
+    bash 不可用或失败时退回 PowerShell 直接调 ps1（Windows 原生）。
+    """
     ps1 = ROOT / "build_dataset.ps1"
     if not ps1.is_file():
         print(f"  [FAIL] 缺 {ps1}")
         return False
-    # Windows 用 powershell；跨平台退回 sh -c 调 pwsh（Kaggle 验证主场景是 Windows 本机）
-    if os.name == "nt":
-        code, out, err = sh(["powershell", "-NoProfile", "-File", str(ps1)], cwd=ROOT)
-    else:
-        code, out, err = sh(["pwsh", "-NoProfile", "-File", str(ps1)], cwd=ROOT)
-    if out and out.strip():
-        print(out)
-    if err and err.strip():
-        print(err)
-    if code != 0:
-        print(f"  [FAIL] build_dataset.ps1 退出码 {code}")
-        return False
-    print(f"  [ok] dataset 已组装：{DATASET}")
-    return True
+    # bash -c "cmd" 会把整个命令作为单个参数传给 cmd.exe（Windows cmd 兼容层），
+    # 等价于在终端里直接敲 powershell -File ...，但跑在 bash 会话内（bash 环境为主）。
+    ps_cmd = f"powershell -NoProfile -File {ps1}"
+    bash_exe = find_bash()
+    candidates: list[tuple[list, str]] = []
+    if bash_exe:
+        candidates.append(([bash_exe, "-c", ps_cmd], f"bash({bash_exe})"))
+    candidates.append((["powershell", "-NoProfile", "-File", str(ps1)], "powershell"))
+    last_err = ""
+    for cmd, label in candidates:
+        code, out, err = sh(cmd, cwd=ROOT)
+        if out and out.strip():
+            print(out)
+        if err and err.strip():
+            print(err)
+        if code == 0:
+            print(f"  [ok] dataset 已组装（via {label}）：{DATASET}")
+            return True
+        last_err = f"{label} 退出码 {code}"
+        print(f"  [warn] {label} 失败（{last_err}），尝试下一个")
+    print(f"  [FAIL] 所有组装方式均失败：{last_err}")
+    return False
 
 
 def verify_dataset_content() -> bool:

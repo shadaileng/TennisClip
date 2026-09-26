@@ -55,25 +55,27 @@ kaggle/
 
 ## 快速开始（本地准备 → Kaggle 推送 → 下载结果）
 
-```powershell
+```bash
 # 0. 前置：装 kaggle CLI + 配凭据（三选一，deploy.py 按「环境变量 > kaggle/.env > ~/.kaggle/kaggle.json」优先级识别）
 pip install kaggle
 #   方式 A（推荐，随仓库不入库）：kaggle/.env（.gitignore 已忽略）
-#     Set-Content kaggle\.env @"`nKAGGLE_USER_NAME=你的用户名`nKAGGLE_API_KEY=你的APIKey"@ -Encoding UTF8
+#     创建 kaggle/.env 写入：
+#       KAGGLE_USER_NAME=你的用户名
+#       KAGGLE_API_KEY=你的APIKey
 #     （kaggle.com → 账户 → Create New API Token）
 #   方式 B：设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY
-#   方式 C：mkdir $HOME\.kaggle  把 kaggle.json 放里面
+#   方式 C：~/.kaggle/kaggle.json
 
 # 1. 本地准备：视频 + 权重（可选，缺了 Kaggle 侧 TrackNet 级联跳过但链路仍通）
 cd kaggle
-New-Item -ItemType Directory -Force dataset\data, dataset\weights
-Copy-Item ..\backend\data\sample_videos\*.mp4 dataset\data\
-Copy-Item ..\backend\data\models\tracknet.pth dataset\weights\
+mkdir -p dataset/data dataset/weights
+cp ../backend/data/sample_videos/*.mp4 dataset/data/ 2>/dev/null || true
+cp ../backend/data/models/tracknet.pth dataset/weights/ 2>/dev/null || true
 #    若权重缺失，本地先跑 backend/scripts/fetch_tracknet_weights.py 生成
 
-# 2. 一键部署（组装 + 上传 dataset + 推 notebook，全自动）
+# 2. 一键部署（组装 + 上传 dataset + 推 notebook，全自动；组装经 bash 环境）
 python deploy.py
-#    等价于手动：powershell -File .\build_dataset.ps1
+#    等价于手动（bash 内执行）：bash -c "powershell -NoProfile -File build_dataset.ps1"
 #              → kaggle datasets create -p dataset
 #              → kaggle kernels push -p .
 #    只组装本地不上传：python deploy.py --skip-upload --allow-missing-cli
@@ -86,9 +88,14 @@ python deploy.py
 #    点 "Run All" 运行
 
 # 4. 运行完成后拉结果
-kaggle kernels pull {username}/kaggle-tennisclip-verify -p out\
-#    拿到 out\kaggle-00\track_overlay.mp4 + result.json + summary.json
+kaggle kernels pull {username}/kaggle-tennisclip-verify -p out/
+#    拿到 out/kaggle-00/track_overlay.mp4 + result.json + summary.json
 ```
+
+> 环境约定：**运行脚本以 bash 环境为主**（Linux / macOS / Git Bash）。
+> `deploy.py` 的 dataset 组装步骤经 `bash -c` 调 `build_dataset.ps1`（Git Bash 的
+> cmd 兼容层执行 powershell）；bash 不可用时自动退回 PowerShell 直接调。
+> 无 bash 的 Windows 原生 PowerShell 环境也可用（自动回退）。
 # 5. 下载结果
 kaggle kernels pull {username}/kaggle-tennisclip-verify -p out\
 #    拿到 out\kaggle-00\track_overlay.mp4 + result.json + summary.json
