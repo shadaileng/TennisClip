@@ -37,16 +37,66 @@ BACKEND = ROOT.parent / "backend"
 DATASET = ROOT / "dataset"
 SLUG_DEFAULT = "kaggle-tennisclip-verify"
 KERNEL_SLUG_DEFAULT = "kaggle-tennisclip-verify"   # notebook slug
+DOTENV_FILE = ROOT / ".env"                          # kaggle/.env（KAGGLE_USER_NAME / KAGGLE_API_KEY，.gitignore 忽略）
+DOTENV_NAME = "kaggle/.env"
 
 
-def sh(cmd: list[str], cwd: Path | None = None, dry: bool = False) -> tuple[int, str, str]:
-    """跑外部命令，返回 (exit_code, stdout, stderr)。dry=True 只打印不执行。"""
+def load_dotenv() -> dict:
+    """解析 kaggle/.env（KEY=VALUE，# 注释/空行跳过），返回 dict。标准库手写，零依赖。
+
+    文件不存在/无有效键时返回空 dict。进程环境变量优先（不覆盖已有值），
+    缺失的 KAGGLE_USER_NAME / KAGGLE_API_KEY 由 .env 补齐。
+    兼容 BOM 前缀（PowerShell 5.1 的 Set-Content -Encoding UTF8 / Out-File 会写 BOM）。
+    """
+    values: dict = {}
+    if not DOTENV_FILE.is_file():
+        return values
+    try:
+        raw = DOTENV_FILE.read_bytes()
+        # 剥离 UTF-8 BOM（PowerShell 5.1 写文件带 BOM 会导致首行 key 前缀错乱）
+        if raw.startswith(b"\xef\xbb\xbf"):
+            raw = raw[3:]
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return values
+    for ln in lines:
+        line = ln.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip("'\"")
+        if key:
+            values[key] = val
+    return values
+
+
+def kaggle_env() -> dict:
+    """kaggle CLI 子进程环境：进程环境变量 + kaggle/.env 补齐（环境变量优先）。
+
+    kaggle CLI 认 KAGGLE_USER_NAME / KAGGLE_API_KEY，或 ~/.kaggle/kaggle.json。
+    这里把 .env 的值注进子进程 env，使脚本在「.env 配凭据、机器无 kaggle.json」时也能上传。
+    """
+    env = dict(os.environ)
+    file_values = load_dotenv()
+    for k, v in file_values.items():
+        env.setdefault(k, v)   # 环境变量优先，.env 只补缺
+    return env
+
+
+def sh(cmd: list[str], cwd: Path | None = None, dry: bool = False, env: dict | None = None) -> tuple[int, str, str]:
+    """跑外部命令，返回 (exit_code, stdout, stderr)。dry=True 只打印不执行。
+
+    env：子进程环境变量（缺省继承 os.environ；kaggle CLI 命令传 kaggle_env() 注入 .env 凭据）。
+    """
     if dry:
         print(f"  [dry] {' '.join(str(c) for c in cmd)}")
         return (0, "", "")
     try:
         r = subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None,
-                           capture_output=True, text=True, timeout=600)
+                           capture_output=True, text=True, timeout=600, env=env)
         return (r.returncode, r.stdout, r.stderr)
     except FileNotFoundError:
         return (127, "", "命令不存在：" + cmd[0])
@@ -63,24 +113,38 @@ def check_kaggle_cli() -> bool:
     """kaggle CLI 是否可用（pip 装的 kaggle 包提供 kaggle 命令）。"""
     code, out, err = sh(["kaggle", "--version"])
     if code != 0:
-        print("  ✗ 未找到 kaggle CLI（" + (err.strip() or out.strip() or "命令不存在") + "）")
+        print("  [FAIL] 未找到 kaggle CLI（" + (err.strip() or out.strip() or "命令不存在") + "）")
         print("  请先：pip install kaggle   并配凭据：")
-        print("    Windows: mkdir $HOME\\.kaggle  把 kaggle.json 放里面（kaggle.com→账户→Create New API Token）")
-        print("    或设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY")
+        print("    Windows: mkdir $HOME\\.kaggle  把 kaggle.json 放里面（kaggle.com 账户 Create New API Token）")
+        print("    或设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY，或写 kaggle/.env")
         return False
-    print(f"  ✓ kaggle CLI {out.strip()}")
+    print(f"  [ok] kaggle CLI {out.strip()}")
     return True
 
 
 def check_credentials() -> bool:
-    """凭据预检：能调 kaggle api 说明配好；不强制（上传时才真正用到）。"""
+    """凭据预检：环境变量 > kaggle/.env > ~/.kaggle/kaggle.json；不强制（上传时才真正用到）。"""
     has_env = bool(os.environ.get("KAGGLE_USER_NAME") and os.environ.get("KAGGLE_API_KEY"))
+    file_values = load_dotenv()
+    has_dotenv = DOTENV_FILE.is_file() and bool(file_values.get("KAGGLE_USER_NAME"))
     has_file = Path.home().joinpath(".kaggle", "kaggle.json").exists()
-    if has_env or has_file:
-        print("  ✓ 凭据来源：" + ("环境变量 KAGGLE_USER_NAME/KAGGLE_API_KEY" if has_env
-                                  else "文件 ~/.kaggle/kaggle.json"))
+    if has_env:
+        print("  [ok] 凭据来源：环境变量 KAGGLE_USER_NAME/KAGGLE_API_KEY")
         return True
-    print("  ⚠ 未检测到 kaggle 凭据（无环境变量、无 ~/.kaggle/kaggle.json）")
+    if has_dotenv:
+        print(f"  [ok] 凭据来源：{DOTENV_FILE.name}（KAGGLE_USER_NAME/KAGGLE_API_KEY，将注入 kaggle CLI 子进程）")
+        return True
+    if has_file:
+        print("  [ok] 凭据来源：文件 ~/.kaggle/kaggle.json")
+        return True
+    print("  [warn] 未检测到 kaggle 凭据（无环境变量、无 kaggle/.env、无 ~/.kaggle/kaggle.json）")
+    print(f"    三种方式任选其一：")
+    print(f"      A. 写 {DOTENV_NAME}（推荐，.gitignore 已忽略不入库）：")
+    print(f"         KAGGLE_USER_NAME=你的用户名")
+    print(f"         KAGGLE_API_KEY=你的APIKey")
+    print(f"         （kaggle.com 账户 Create New API Token 获取）")
+    print(f"      B. 设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY")
+    print(f"      C. 写 ~/.kaggle/kaggle.json")
     print("    上传步骤会失败。先配凭据再重跑，或先 --skip-upload 只组装本地。")
     return False
 
@@ -89,7 +153,7 @@ def build_dataset() -> bool:
     """调 build_dataset.ps1 组装 kaggle/dataset/（含 verify.py/app.tar.gz/权重/视频/meta.json）。"""
     ps1 = ROOT / "build_dataset.ps1"
     if not ps1.is_file():
-        print(f"  ✗ 缺 {ps1}")
+        print(f"  [FAIL] 缺 {ps1}")
         return False
     # Windows 用 powershell；跨平台退回 sh -c 调 pwsh（Kaggle 验证主场景是 Windows 本机）
     if os.name == "nt":
@@ -101,9 +165,9 @@ def build_dataset() -> bool:
     if err and err.strip():
         print(err)
     if code != 0:
-        print(f"  ✗ build_dataset.ps1 退出码 {code}")
+        print(f"  [FAIL] build_dataset.ps1 退出码 {code}")
         return False
-    print(f"  ✓ dataset 已组装：{DATASET}")
+    print(f"  [ok] dataset 已组装：{DATASET}")
     return True
 
 
@@ -111,40 +175,39 @@ def verify_dataset_content() -> bool:
     """组装产物完整性：meta.json + verify.py + app 包 + (权重可选) + (视频可选)。"""
     ok = True
     if not DATASET.joinpath("meta.json").is_file():
-        print("  ✗ 缺 meta.json"); ok = False
+        print("  [FAIL] 缺 meta.json"); ok = False
     if not DATASET.joinpath("verify.py").is_file():
-        print("  ✗ 缺 verify.py"); ok = False
+        print("  [FAIL] 缺 verify.py"); ok = False
     if not (DATASET.joinpath("app.tar.gz").is_file() or DATASET.joinpath("app.zip").is_file()):
-        print("  ✗ 缺 app.tar.gz / app.zip（app 代码包）"); ok = False
+        print("  [FAIL] 缺 app.tar.gz / app.zip（app 代码包）"); ok = False
     vids = list(DATASET.glob("data/*.mp4")) if DATASET.joinpath("data").is_dir() else []
     pths = list(DATASET.glob("weights/*.pth")) if DATASET.joinpath("weights").is_dir() else []
     if not vids:
-        print("  ⚠ data/ 下无 mp4 视频——Kaggle 跑起来会因「无视频」退出。")
+        print("  [warn] data/ 下无 mp4 视频——Kaggle 跑起来会因「无视频」退出。")
         print("     先往 kaggle/dataset/data/ 放 1-5 分钟网球视频再重跑（或 backend/data/sample_videos/）")
-        # 无视频不算致命（可先传代码再补视频），但提示
     if not pths:
-        print("  ⚠ weights/ 下无 .pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
+        print("  [warn] weights/ 下无 .pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
         print("     要真跑推理，先 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth 放入。")
     if ok:
-        print(f"  ✓ dataset 内容就绪（视频 {len(vids)} 个 / 权重 {len(pths)} 个）")
+        print(f"  [ok] dataset 内容就绪（视频 {len(vids)} 个 / 权重 {len(pths)} 个）")
     return ok
 
 
 def upload_dataset(slug: str) -> bool:
     """kaggle datasets create -p dataset（dataset/ 根须有 meta.json）。"""
-    print(f"  上传 dataset → {slug}")
-    code, out, err = sh(["kaggle", "datasets", "create", "-p", "dataset"], cwd=ROOT)
+    print(f"  上传 dataset -> {slug}")
+    code, out, err = sh(["kaggle", "datasets", "create", "-p", "dataset"], cwd=ROOT, env=kaggle_env())
     if out and out.strip():
         print(out)
     if err and err.strip():
         print(err)
     if code != 0:
-        print(f"  ✗ 上传失败（退出码 {code}）")
+        print(f"  [FAIL] 上传失败（退出码 {code}）")
         print("     常见原因：凭据缺失/5GB 超限/slug 被占用。改 slug 重传：")
         print(f"     1) 编辑 {DATASET / 'meta.json'} 的 dataset_name 或传参 --slug")
         print(f"     2) 重跑：python {ROOT / 'deploy.py'} --slug <新slug>")
         return False
-    print(f"  ✓ dataset 已上传 Kaggle：{slug}")
+    print(f"  [ok] dataset 已上传 Kaggle：{slug}")
     return True
 
 
@@ -152,16 +215,16 @@ def push_notebook(kernel_slug: str) -> bool:
     """kaggle kernels push -p . 把 kaggle_verify.ipynb 推成 Kaggle notebook。"""
     ipynb = ROOT / "kaggle_verify.ipynb"
     if not ipynb.is_file():
-        print(f"  ✗ 缺 notebook 模板 {ipynb}")
+        print(f"  [FAIL] 缺 notebook 模板 {ipynb}")
         return False
-    print(f"  推送 notebook → {kernel_slug}")
-    code, out, err = sh(["kaggle", "kernels", "push", "-p", "."], cwd=ROOT)
+    print(f"  推送 notebook -> {kernel_slug}")
+    code, out, err = sh(["kaggle", "kernels", "push", "-p", "."], cwd=ROOT, env=kaggle_env())
     if out and out.strip():
         print(out)
     if code != 0:
-        print(f"  ✗ notebook 推送失败（退出码 {code}）：{(err or '').strip()[:400]}")
+        print(f"  [FAIL] notebook 推送失败（退出码 {code}）：{(err or '').strip()[:400]}")
         return False
-    print(f"  ✓ notebook 已推送")
+    print(f"  [ok] notebook 已推送")
     print(f"    在 https://www.kaggle.com/kernels 搜 '{kernel_slug}' 找到")
     return True
 
@@ -171,25 +234,29 @@ def print_manual_steps(slug: str, kernel_slug: str) -> None:
     print("\n" + "=" * 60)
     print("下一步（人工，Kaggle 网页）：")
     print("=" * 60)
-    print(f"  1) 打开 https://www.kaggle.com/kernels 搜 '{kernel_slug}'（或你的用户名下）")
-    print(f"     Settings → Input Data 勾 '{slug}'")
-    print(f"     Settings → Accelerator 选 GPU T4 16GB / P100")
-    print(f"     Settings → Internet 勾 ON（CLIP 需下载 HF 权重）")
-    print(f"     点 Run All 运行（单条视频 1-5 分钟不会触 9h 上限）")
-    print(f"\n  2) 运行完成后（OUTPUT 区出现 track_overlay.mp4）拉结果：")
-    print(f"     kaggle kernels pull <你的用户名>/{kernel_slug} -p out/")
-    print(f"     或网页直接下载 /kaggle/working/ 下的产物")
-    print(f"\n  3) 人工核对（对齐方案 14 §2.4）：")
-    print(f"     out/ 下各 kaggle-XX/track_overlay.mp4 + result.json + summary.json")
-    print(f"     - G1：金标回合内球轨迹是否连续（红未检出=漏检）")
-    print(f"     - G2：静止段（灰标）是否落在回合外；与回合重叠=死球误入")
-    print(f"     - 多球跳变：调 post.visualize_track 的 max_speed/break_gap 重跑")
+    print("  1) 打开 https://www.kaggle.com/kernels 搜 " + "'" + kernel_slug + "'" + "（或你的用户名下）")
+    print("     Settings -> Input Data 勾 '" + slug + "'")
+    print("     Settings -> Accelerator 选 GPU T4 16GB / P100")
+    print("     Settings -> Internet 勾 ON（CLIP 需下载 HF 权重）")
+    print("     点 Run All 运行（单条视频 1-5 分钟不会触 9h 上限）")
+    print("")
+    print("  2) 运行完成后（OUTPUT 区出现 track_overlay.mp4）拉结果：")
+    print("     kaggle kernels pull <你的用户名>/" + kernel_slug + " -p out/")
+    print("     或网页直接下载 /kaggle/working/ 下的产物")
+    print("")
+    print("  3) 人工核对（对齐方案 14 §2.4）：")
+    print("     out/ 下各 kaggle-XX/track_overlay.mp4 + result.json + summary.json")
+    print("     - G1：金标回合内球轨迹是否连续（红未检出=漏检）")
+    print("     - G2：静止段（灰标）是否落在回合外；与回合重叠=死球误入")
+    print("     - 多球跳变：调 post.visualize_track 的 max_speed/break_gap 重跑")
 
 
 def _safe_stdout() -> None:
-    """Windows 控制台 GBK 无法打印 ✓/✗/中文——强制 stdout/stderr 切 UTF-8（PEP 540）。
+    """Windows 控制台 GBK 无法打印 UTF-8 特殊符号/中文——强制 stdout/stderr 切 UTF-8（PEP 540）。
 
     失败（如流已被重定向且不可重配）则静默降级，不阻断脚本。
+    仅 main() 入口调用一次；直接 import 单函数时不会触发，
+    故函数体内一律用 ASCII 安全符（[ok]/[FAIL]/[warn]）打印，不依赖此调用。
     """
     for stream in (sys.stdout, sys.stderr):
         try:

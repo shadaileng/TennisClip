@@ -64,8 +64,9 @@ TennisClip/
 │   ├── verify.py             # 16 节点 executor 完整移植入口（PureExecutor，落 JSON 不连 DB）
 │   ├── build_dataset.ps1     # 一键打包 backend/{app,prompts} → app.tar.gz + 权重 + 视频
 │   ├── kaggle_verify.ipynb   # Notebook 模板（T4/P100 + Internet + input dataset）
-│   ├── deploy.py             # 一键部署（Python 标准库，调 kaggle CLI）：组装+datasets create+kernels push
+│   ├── deploy.py             # 一键部署（Python 标准库，调 kaggle CLI）：组装+datasets create+kernels push（凭据读 环境变量 > kaggle/.env > ~/.kaggle/kaggle.json）
 │   ├── README.md             # 推送/下载/人工核对流程
+│   ├── .env                  # Kaggle API 凭据（KAGGLE_USER_NAME/KAGGLE_API_KEY，.gitignore 忽略，不入仓）
 │   └── dataset/              # 本地组装区（.gitignore 忽略；视频/权重/产物不入库）
 ├── .codebuddy/skills/        # 项目 skills（docs-manage / git-commit）
 ├── package.json              # 根项目配置：VitePress 文档站（pnpm 管理依赖，docs/ 为内容根）
@@ -281,7 +282,7 @@ python3 scripts/manage_services.py clean --yes      # TERM→校验→KILL→复
 
 - **禁止自动启动后台服务**：agent 不得以 `&` / `nohup` / `setsid` / `start / background` 等方式自行启动常驻服务（`uv run uvicorn`、`pnpm dev`、`pnpm run docs:dev`、nginx 等）并放任其在后台运行——会话结束后进程脱离管理、成为**孤儿进程**，用户难以发现与回收（端口占用、僵尸服务）。确需启动时：① 优先前台运行或使用带超时的短生命周期命令；② 必须先向用户说明用途与端口、获得同意；③ 用完立即在同一轮内停止并确认进程已退出（`kill` 后校验，勿只 `kill` 不确认）。
 - **失管进程的查询与回收**用根目录 `scripts/manage_services.py`（纯标准库、只依赖 `/proc`）：`python3 scripts/manage_services.py list`（只读排查，含 `--json`，退出码 0=干净 / 1=有目标）、`... clean --dry-run`（预览不发信号）、`... clean --yes`（TERM → 等待校验 → 必要时 KILL → 复验端口，退出码 0=已清干净 / 1=有残留）。脚本自带安全过滤：永不清理自身进程链、IDE/code-server、grep/ps 等检索工具，且默认要求进程 cwd 在项目根内；勿另写一次性 `kill` 命令。
-- `.gitignore` 已忽略：`backend/.venv/`、`backend/data/`（数据库/输入/输出/日志整体忽略）、`backend/data_test/`（测试数据目录，隔离于 data/）、`backend/.env.test`（测试配置，本地用不入库）、`backend/test_roundtrip.db`（根目录遗留测试库）、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`、`kaggle/dataset/`（Kaggle 验证包的本地组装区，视频/权重/产物不入库）。
+- `.gitignore` 已忽略：`backend/.venv/`、`backend/data/`（数据库/输入/输出/日志整体忽略）、`backend/data_test/`（测试数据目录，隔离于 data/）、`backend/.env.test`（测试配置，本地用不入库）、`backend/test_roundtrip.db`（根目录遗留测试库）、`frontend/node_modules/`、`frontend/dist/`、`__pycache__/`、`kaggle/dataset/`（Kaggle 验证包的本地组装区，视频/权重/产物不入库）、`kaggle/.env`（Kaggle API 凭据 KAGGLE_USER_NAME/KAGGLE_API_KEY，不入库）。
 - 提交时勿将生成数据库或视频文件加入版本控制。
 - 本仓库已采用 MIT 协议（`LICENSE`），修改协议或版权署名需谨慎并同步 README。
 - 验收指标：1–5 分钟视频端到端 ≤ 30s（不含模型推理网络延迟）；高光回合识别准确率 ≥ 90%（样本集离线评测）；连续 100 条批量无崩溃。

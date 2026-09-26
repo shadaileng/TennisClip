@@ -14,6 +14,7 @@ kaggle/
 ├── kaggle_verify.ipynb    # Notebook 模板（已配 P100/T4 + Internet + 输入 dataset）
 ├── build_dataset.ps1      # 一键组装：backend/{app,prompts} + 权重 + 视频 + verify.py → dataset/
 ├── deploy.py              # 一键部署（Python 标准库，调 kaggle CLI）：组装+datasets create+kernels push
+├── .env                   # Kaggle API 凭据（KAGGLE_USER_NAME/KAGGLE_API_KEY，.gitignore 忽略，不入仓）
 └── dataset/               # 本地组装区（.gitignore 忽略，不入库）
     ├── data/              #   待验证视频（1–5 分钟，720p/30fps 更佳）
     ├── weights/           #   TrackNet 权重（tracknet.pth，TorchScript 或 torch.save 完整模型）
@@ -55,10 +56,13 @@ kaggle/
 ## 快速开始（本地准备 → Kaggle 推送 → 下载结果）
 
 ```powershell
-# 0. 前置：装 kaggle CLI + 凭证
+# 0. 前置：装 kaggle CLI + 配凭据（三选一，deploy.py 按「环境变量 > kaggle/.env > ~/.kaggle/kaggle.json」优先级识别）
 pip install kaggle
-mkdir -Force $HOME\.kaggle
-# 把 kaggle.json（从 kaggle.com → 账户 → Create New API Token）放到 $HOME\.kaggle\kaggle.json
+#   方式 A（推荐，随仓库不入库）：kaggle/.env（.gitignore 已忽略）
+#     Set-Content kaggle\.env @"`nKAGGLE_USER_NAME=你的用户名`nKAGGLE_API_KEY=你的APIKey"@ -Encoding UTF8
+#     （kaggle.com → 账户 → Create New API Token）
+#   方式 B：设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY
+#   方式 C：mkdir $HOME\.kaggle  把 kaggle.json 放里面
 
 # 1. 本地准备：视频 + 权重（可选，缺了 Kaggle 侧 TrackNet 级联跳过但链路仍通）
 cd kaggle
