@@ -66,18 +66,15 @@ pip install kaggle
 #   方式 B：设环境变量 KAGGLE_USER_NAME / KAGGLE_API_KEY
 #   方式 C：~/.kaggle/kaggle.json
 
-# 1. 本地准备：视频 + 权重（可选，缺了 Kaggle 侧 TrackNet 级联跳过但链路仍通）
-cd kaggle
-mkdir -p dataset/data dataset/weights
-cp ../backend/data/sample_videos/*.mp4 dataset/data/ 2>/dev/null || true
-cp ../backend/data/models/tracknet.pth dataset/weights/ 2>/dev/null || true
+# 1. 本地准备（可选）：往 dataset/data、dataset/weights 预填视频/权重
+#    不预填也行——deploy.py 会自动从 backend/data/sample_videos、backend/data/models 拷贝
 #    若权重缺失，本地先跑 backend/scripts/fetch_tracknet_weights.py 生成
 
-# 2. 一键部署（组装 + 上传 dataset + 推 notebook，全自动；组装经 bash 环境）
+# 2. 一键部署（纯 Python 组装 + 上传 dataset + 推 notebook，全自动，无 shell 依赖）
 python deploy.py
-#    等价于手动（bash 内执行）：bash -c "powershell -NoProfile -File build_dataset.ps1"
-#              → kaggle datasets create -p dataset
-#              → kaggle kernels push -p .
+#    组装用 Python 标准库（shutil/tarfile/json）完成，等价于手动：
+#      写 dataset/meta.json → 拷 verify.py → tarfile 打 backend/{app,prompts} 为 app.tar.gz
+#      → 拷视频/权重 → kaggle datasets create -p dataset → kaggle kernels push -p .
 #    只组装本地不上传：python deploy.py --skip-upload --allow-missing-cli
 
 # 3. Kaggle 侧人工（deploy.py 末尾会打印）：
@@ -92,10 +89,10 @@ kaggle kernels pull {username}/kaggle-tennisclip-verify -p out/
 #    拿到 out/kaggle-00/track_overlay.mp4 + result.json + summary.json
 ```
 
-> 环境约定：**运行脚本以 bash 环境为主**（Linux / macOS / Git Bash）。
-> `deploy.py` 的 dataset 组装步骤经 `bash -c` 调 `build_dataset.ps1`（Git Bash 的
-> cmd 兼容层执行 powershell）；bash 不可用时自动退回 PowerShell 直接调。
-> 无 bash 的 Windows 原生 PowerShell 环境也可用（自动回退）。
+> 环境约定：**以 bash 环境为主**（Linux / macOS / Git Bash），Windows 原生 PowerShell 亦可。
+> `deploy.py` 的 dataset 组装是**纯 Python 标准库**（shutil/tarfile/json），不依赖 bash、
+> PowerShell 或 tar CLI，因此 bash 与 Windows 终端里行为完全一致。
+> `build_dataset.ps1` 作为独立 PowerShell 脚本保留，供习惯 PowerShell 的用户单独使用。
 # 5. 下载结果
 kaggle kernels pull {username}/kaggle-tennisclip-verify -p out\
 #    拿到 out\kaggle-00\track_overlay.mp4 + result.json + summary.json

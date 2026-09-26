@@ -59,7 +59,7 @@ TennisClip/                        # 总项目
 ├── kaggle/                        # Kaggle GPU 验证包（方案 14 · Step 2/6；代码零分叉）
 │   ├── verify.py                  # 16 节点 executor 完整移植入口（PureExecutor，落 JSON 不连 DB）
 │   ├── build_dataset.ps1          # 一键打包 backend/{app,prompts} → app.tar.gz + 权重 + 视频
-│   ├── deploy.py                  # 一键部署（Python 标准库，调 kaggle CLI）：组装+datasets create+kernels push
+│   ├── deploy.py                  # 一键部署（Python 标准库，调 kaggle CLI）：纯 Python 组装 dataset（shutil/tarfile，无 shell 依赖）+datasets create+kernels push
 │   ├── kaggle_verify.ipynb        # Notebook 模板（T4/P100 + Internet + input dataset）
 │   └── README.md                  # 推送/下载/人工核对流程
 ├── .codebuddy/skills/docs-manage  # 文档管理 skill

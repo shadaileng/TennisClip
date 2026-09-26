@@ -3,7 +3,7 @@
 
 把「CV 增强调试工作流」完整移植到 Kaggle 免费 GPU 的整条链路压成一条命令：
 
-    检查凭据 → 组装 dataset（经 bash 环境调 build_dataset.ps1）→ kaggle datasets create
+    检查凭据 → 纯 Python 组装 dataset（shutil/tarfile，无 shell 依赖）→ kaggle datasets create
     → 推 notebook（kaggle kernels push）→ 打印「Kaggle 侧要做什么 + 完成后怎么拉结果」
 
 设计边界：
@@ -13,9 +13,10 @@
   不自动 pull（Kaggle 免费 GPU 运行 10 分钟 ~ 2 小时，脚本跑完时 notebook 还没跑完）。
 - kaggle CLI 必须已安装且已配凭据（kaggle/.env 或 $KAGGLE_USER_NAME/$KAGGLE_API_KEY 或 ~/.kaggle/kaggle.json）；
   脚本只做「能跑通吗」预检，不代装 CLI。
-- 运行环境以 bash 为主（Linux/macOS/Git Bash）：组装 dataset 优先经 bash -c 调
-  build_dataset.ps1（cmd 兼容层）；bash 不可用/失败时退回 PowerShell 直接调 ps1。
-  kaggle CLI 子命令（datasets create / kernels push）在任意 shell 内都可用。
+- dataset 组装用纯 Python 标准库（shutil/tarfile/json）实现，**不依赖任何 shell 脚本**
+  （bash / PowerShell / tar CLI 都不需要），在 bash（Linux/macOS/Git Bash）或 Windows
+  原生 PowerShell 里 `python deploy.py` 行为完全一致。
+  build_dataset.ps1 保留供习惯 PowerShell 的用户单独使用，deploy.py 不再调用它。
 
 用法：
     python kaggle/deploy.py                # 全流程（默认）
@@ -33,6 +34,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent          # kaggle/
@@ -153,65 +155,95 @@ def check_credentials() -> bool:
     return False
 
 
-def find_bash() -> str | None:
-    """定位可用的 bash 可执行文件。
-
-    策略：PATH 上的 bash 优先；若 PATH 上的 bash 跑不通（如 WindowsApps 的 WSL
-    转发器指向未装发行版），依次探测 Git Bash 常见安装路径。
-    """
-    candidates: list[str] = []
-    on_path = shutil.which("bash")
-    if on_path:
-        candidates.append(on_path)
-    candidates += [
-        r"C:\Program Files\Git\bin\bash.exe",
-        r"C:\Program Files\Git\usr\bin\bash.exe",
-        r"C:\Program Files (x86)\Git\bin\bash.exe",
-    ]
-    for c in candidates:
-        if not os.path.isfile(c):
-            continue
-        try:
-            r = subprocess.run([c, "--version"], capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if r.returncode == 0:
-            return c
-    return None
-
-
 def build_dataset() -> bool:
-    """调 build_dataset.ps1 组装 kaggle/dataset/（含 verify.py/app.tar.gz/权重/视频/meta.json）。
+    """纯 Python 组装 kaggle/dataset/（meta.json + verify.py + app.tar.gz + 视频 + 权重）。
 
-    优先用 bash 环境跑（Git Bash 的 cmd 兼容层 / Linux / macOS）；
-    bash 不可用或失败时退回 PowerShell 直接调 ps1（Windows 原生）。
+    与 build_dataset.ps1 同一套布局，但全用 Python 标准库（shutil/tarfile/os）实现，
+    不依赖 powershell / bash / tar CLI——在 bash（Linux/macOS/Git Bash）或 Windows
+    原生 PowerShell 里 `python deploy.py` 都能跑，行为完全一致。
+    build_dataset.ps1 保留供习惯 PowerShell 的用户单独使用。
     """
-    ps1 = ROOT / "build_dataset.ps1"
-    if not ps1.is_file():
-        print(f"  [FAIL] 缺 {ps1}")
+    # 0. 清理旧产物（保留 data/weights 用户预填内容，只重建 meta/verify/app.tar.gz）
+    for old in (DATASET / "app.tar.gz", DATASET / "app.zip"):
+        old.unlink(missing_ok=True)
+
+    # 1. 校验前置
+    if not (BACKEND / "app").is_dir():
+        print(f"  [FAIL] 缺 {BACKEND / 'app'}，请确认在仓库内运行")
         return False
-    # bash -c "cmd" 会把整个命令作为单个参数传给 cmd.exe（Windows cmd 兼容层），
-    # 等价于在终端里直接敲 powershell -File ...，但跑在 bash 会话内（bash 环境为主）。
-    ps_cmd = f"powershell -NoProfile -File {ps1}"
-    bash_exe = find_bash()
-    candidates: list[tuple[list, str]] = []
-    if bash_exe:
-        candidates.append(([bash_exe, "-c", ps_cmd], f"bash({bash_exe})"))
-    candidates.append((["powershell", "-NoProfile", "-File", str(ps1)], "powershell"))
-    last_err = ""
-    for cmd, label in candidates:
-        code, out, err = sh(cmd, cwd=ROOT)
-        if out and out.strip():
-            print(out)
-        if err and err.strip():
-            print(err)
-        if code == 0:
-            print(f"  [ok] dataset 已组装（via {label}）：{DATASET}")
-            return True
-        last_err = f"{label} 退出码 {code}"
-        print(f"  [warn] {label} 失败（{last_err}），尝试下一个")
-    print(f"  [FAIL] 所有组装方式均失败：{last_err}")
-    return False
+    verify_py = ROOT / "verify.py"
+    if not verify_py.is_file():
+        print(f"  [FAIL] 缺 {verify_py}")
+        return False
+
+    # 1b. 依赖检查（Kaggle notebook 会 pip 装；本地 dry-run 需 backend/.venv 已 uv sync）
+    deps = ["loguru", "pydantic", "yaml", "dotenv", "torch", "cv2", "ultralytics", "transformers"]
+    missing = []
+    for d in deps:
+        r = sh([sys.executable, "-c", f"import {d}"])
+        if r[0] != 0:
+            missing.append(d)
+    if missing:
+        print(f"  [warn] 以下依赖当前 python 未装（Kaggle 侧由 notebook cell 1 pip 安装；本地 dry-run 用 backend/.venv 即可）：{', '.join(missing)}")
+
+    # 2. meta.json
+    DATASET.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "dataset_name": SLUG_DEFAULT,
+        "title": "TennisClip CV 验证包（代码+权重+视频）",
+        "version": 1,
+        "license": "MIT",
+    }
+    (DATASET / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("  [1/4] meta.json 已生成")
+
+    # 3. 拷贝 verify.py
+    shutil.copy2(verify_py, DATASET / "verify.py")
+    print("  [2/4] verify.py 已拷贝")
+
+    # 4. 打包 backend/{app,prompts} → dataset/app.tar.gz
+    # report 节点 import prompts.highlight_analysis（顶层包），verify.py 的 --repo 指向解压根（含 app/ 与 prompts/）
+    tar_path = DATASET / "app.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tf:
+        for sub in ("app", "prompts"):
+            src_dir = BACKEND / sub
+            if src_dir.is_dir():
+                tf.add(src_dir, arcname=sub)
+    print(f"  [3/4] app.tar.gz 已生成（tarfile，含 app/ + prompts/）：{tar_path}")
+
+    # 5. 拷贝视频与权重（用户已预填 dataset/data、dataset/weights 则跳过；否则从 backend 拷贝）
+    data_dir = DATASET / "data"
+    weights_dir = DATASET / "weights"
+    src_videos = BACKEND / "data" / "sample_videos"
+    src_models = BACKEND / "data" / "models"
+
+    if src_videos.is_dir():
+        data_dir.mkdir(parents=True, exist_ok=True)
+        n = 0
+        for f in src_videos.glob("*.mp4"):
+            shutil.copy2(f, data_dir / f.name)
+            n += 1
+        if n:
+            print(f"  [4/4] 视频已拷贝：{n} 个 mp4 → {data_dir}")
+        else:
+            print("  [warn] backend/data/sample_videos/ 下无 mp4（可手动往 dataset/data/ 放视频）")
+    else:
+        print(f"  [warn] 未找到 {src_videos}（可手动往 dataset/data/ 放视频）")
+
+    if src_models.is_dir():
+        weights_dir.mkdir(parents=True, exist_ok=True)
+        pths = list(src_models.glob("*.pth"))
+        if pths:
+            for f in pths:
+                shutil.copy2(f, weights_dir / f.name)
+            print(f"  权重已拷贝：{len(pths)} 个 .pth → {weights_dir}")
+        else:
+            print(f"  [warn] 未找到 {src_models}/*.pth（先跑 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth）")
+
+    # 6. 提示
+    total = sum(f.stat().st_size for f in DATASET.rglob("*") if f.is_file())
+    print(f"\n  [ok] dataset 已组装：{DATASET}（约 {total / 1048576:.1f} MB，Kaggle 上限 5GB）")
+    return True
 
 
 def verify_dataset_content() -> bool:
@@ -349,9 +381,9 @@ def main() -> int:
         return 1
 
     # 3) 组装 dataset
-    next_step("组装 kaggle/dataset/（build_dataset.ps1）")
+    next_step("组装 kaggle/dataset/（纯 Python：shutil/tarfile，无 shell 依赖）")
     if not build_dataset():
-        print("\n终止：dataset 组装失败。检查 build_dataset.ps1 报错。")
+        print("\n终止：dataset 组装失败。检查上方报错（meta.json/verify.py/app.tar.gz/视频/权重）。")
         return 1
 
     # 4) 内容完整性
