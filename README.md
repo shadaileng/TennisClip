@@ -56,6 +56,11 @@ TennisClip/                        # 总项目
 │   └── .vitepress/config.mts      # 侧边栏配置（新增文档必须同步）
 ├── scripts/                       # 根目录工具脚本（跨前后端）
 │   └── manage_services.py         # 失管后台服务进程查询/清理（list / clean）
+├── kaggle/                        # Kaggle GPU 验证包（方案 14 · Step 2/6；代码零分叉）
+│   ├── verify.py                  # 16 节点 executor 完整移植入口（PureExecutor，落 JSON 不连 DB）
+│   ├── build_dataset.ps1          # 一键打包 backend/{app,prompts} → app.tar.gz + 权重 + 视频
+│   ├── kaggle_verify.ipynb        # Notebook 模板（T4/P100 + Internet + input dataset）
+│   └── README.md                  # 推送/下载/人工核对流程
 ├── .codebuddy/skills/docs-manage  # 文档管理 skill
 ├── AGENTS.md                       # AI 编码代理上下文与约定
 ├── README.md

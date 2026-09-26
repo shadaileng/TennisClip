@@ -4,6 +4,13 @@
 
 格式基于 Keep a Changelog，版本号遵循语义化版本。
 
+## [0.25.0] - 2026-09-26
+
+### Added
+
+- Kaggle GPU 验证包（v0.25.0）：新增 `kaggle/` 目录（方案 14 Step 2/6）——`verify.py` 完整移植 16 节点 executor 图（`PureExecutor` 与 `app.workflow.executor.Executor` 同构，落库替换为写 JSON 到 `/kaggle/working/`，代码零分叉）+ `build_dataset.ps1` 一键打包 `backend/{app,prompts}` → `app.tar.gz` + 权重 + 视频 + `kaggle_verify.ipynb`（T4/P100 + Internet + input dataset 模板）+ `README.md`（推送/下载/人工核对流程）；`loguru` 新增 `TENNISCLIP_LOG_ENQUEUE` 开关（受限环境关 enqueue，Windows 沙箱 import 不崩）；本地 dry-run 验证通过（假权重 → `CvUnavailable` → `on_failure=skip` 级联跳过 n4–n8，`result.json` 正确落盘）
+
+
 ## [0.24.0] - 2026-09-25
 
 ### Added

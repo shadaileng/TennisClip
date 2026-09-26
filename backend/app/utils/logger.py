@@ -107,13 +107,20 @@ def setup_logging(log_file: Path | None = None) -> None:
     level = _resolve_level()
     _loguru_logger.remove()  # 清除默认 sink，防止重复输出
 
+    # 受限环境探测：Kaggle dry-run / 无 multiprocess 权限 / 沙箱下
+    # loguru enqueue=True 需创建 multiprocessing.SimpleQueue（Windows 匿名管道），
+    # 权限不足时降级为非 enqueue（同步写），保证 import 不崩（对齐 kaggle/verify.py 的
+    # TENNISCLIP_DRYRUN 场景；正常环境走 enqueue 异步写不阻塞主线程）。
+    # 开关 TENNISCLIP_LOG_ENQUEUE=1（默认）/ 0（关 enqueue）。
+    _enqueue = os.environ.get("TENNISCLIP_LOG_ENQUEUE", "1") == "1"
+
     # 控制台 sink（stderr，彩色）
     _loguru_logger.add(
         sys.stderr,
         level=level,
         colorize=True,
         format=FMT_CONSOLE,
-        enqueue=True,
+        enqueue=_enqueue,
         backtrace=True,
         diagnose=False,
     )
@@ -132,7 +139,7 @@ def setup_logging(log_file: Path | None = None) -> None:
             rotation="10 MB",
             retention="7 days",
             compression="zip",
-            enqueue=True,
+            enqueue=_enqueue,
         )
     except Exception as exc:  # noqa: BLE001
         _loguru_logger.warning("文件日志初始化失败，仅启用控制台输出：{}", exc)

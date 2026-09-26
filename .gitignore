@@ -42,3 +42,6 @@ docs/reference/
 
 # codebuddy 自动生成的规划文件（工作区临时产物，不入库）
 .codebuddy/plans/
+
+# Kaggle GPU 验证包（脚本/模板入库；dataset/ 的视频/权重/组装产物不入库）
+kaggle/dataset/
