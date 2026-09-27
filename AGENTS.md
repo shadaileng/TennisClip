@@ -64,7 +64,7 @@ TennisClip/
 │   ├── verify.py             # 16 节点 executor 完整移植入口（PureExecutor，落 JSON 不连 DB）
 │   ├── build_dataset.ps1     # 一键打包 backend/{app,prompts} → app.tar.gz + 权重 + 视频
 │   ├── kaggle_verify.ipynb   # Notebook 模板（T4/P100 + Internet + input dataset）
-│   ├── deploy.py             # 一键部署（Python 标准库，调 kaggle CLI）：纯 Python 组装 dataset（shutil/tarfile，全平铺布局，无 shell 依赖）+datasets create+kernels push；kaggle CLI 2.x 认 dataset-metadata.json（全 ASCII）+kernel-metadata.json（notebook 推送必需）+新版 KAGGLE_API_TOKEN/access_token > kaggle/.env > 旧版 user/key
+│   ├── deploy.py             # 一键部署（Python 标准库，调 kaggle CLI）：纯 Python 组装 dataset（shutil/tarfile，全平铺布局，无 shell 依赖）+datasets create+kernels push；kaggle CLI 2.x 认 dataset-metadata.json（全 ASCII）+kernel-metadata.json（notebook 推送必需，schema 含 code_file/dataset_sources，自动幂等生成）+新版 KAGGLE_API_TOKEN/access_token > kaggle/.env > 旧版 user/key
 │   ├── README.md             # 推送/下载/人工核对流程
 │   ├── .env                  # Kaggle API 凭据（KAGGLE_USER_NAME/KAGGLE_API_KEY，.gitignore 忽略，不入仓）
 │   └── dataset/              # 本地组装区（.gitignore 忽略；视频/权重/产物不入库）

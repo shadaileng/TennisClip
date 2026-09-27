@@ -112,9 +112,13 @@ kaggle kernels pull {username}/kaggle-tennisclip-verify -p out/
 >   verify.py 开跑前自动规整为 `data/` + `weights/`；要连子目录全传需 `-r zip`/`-r tar`（会多套一层压缩包，勿用）。
 > - 缺 dataset/ 目录时 CLI 报 `Invalid folder`——先 `python deploy.py --skip-upload` 组装再传。
 > - **notebook 推送需 `kernel-metadata.json`**（kaggle CLI 2.x 的 `kernels push` 必需，缺则报
->   `Metadata file not found: .\kernel-metadata.json`）：schema 为 `id`=`<用户名>/<slug>`、`title`、
->   `kernel_type=notebook`、`enable_gpu`/`enable_internet` 等（全 ASCII，同 dataset-metadata）。
->   deploy.py 的 `push_notebook()` 会自动生成/保留（幂等：已存在真实用户名则不覆盖）。
+>   `Metadata file not found`；缺 `code_file` 字段报 `A source file must be specified`）：
+>   kaggle CLI 2.x 的 kernel-metadata schema 与旧版完全不同，必需字段为
+>   `id`（`<用户名>/<slug>`）/`title`/`code_file`（.ipynb 相对路径，**不是** `source_file`）/
+>   `language`/`kernel_type`；可选 `is_private`/`enable_gpu`/`enable_internet`/`machine_shape`/
+>   `dataset_sources`（`<用户名>/<dataset-slug>`，notebook 打开时自动挂载输入）。
+>   全 ASCII，同 dataset-metadata。deploy.py 的 `push_notebook()` 自动幂等生成，
+>   `dataset_sources` 自动填 `<owner>/<dataset_slug>`（网页打开 notebook 免手动勾 Input Data）。
 
 ## 已知限制
 

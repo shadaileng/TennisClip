@@ -394,12 +394,15 @@ def upload_dataset(slug: str) -> bool:
     return True
 
 
-def _ensure_kernel_metadata(kernel_slug: str) -> None:
+def _ensure_kernel_metadata(kernel_slug: str, dataset_slug: str | None = None) -> None:
     """确保 kaggle/kernel-metadata.json 存在（kaggle CLI 2.x 推 notebook 必需）。
 
-    幂等：已存在且 id 前缀为真实用户名（非占位）则保留，避免覆盖用户手改值；
-    缺 id 或 id 仍为占位则用当前解析出的用户名重写。
+    kaggle CLI 2.x 的 kernel-metadata schema（官方 docs/kernels_metadata.md）：
+    - 必需：`id` 或 `id_no`、`title`、`code_file`（.ipynb 相对路径）、`language`、`kernel_type`
+    - 可选：`is_private`、`enable_gpu`、`enable_internet`、`machine_shape`、
+      `dataset_sources`（`<用户名>/<dataset-slug>`，让 notebook 自动挂载输入）等
     全字段 ASCII（同 dataset-metadata，CLI 用系统默认编码读 JSON，中文 Windows GBK 下须避免中文）。
+    幂等：已存在且 id 前缀为真实用户名（非占位）则保留，避免覆盖用户手改值。
     """
     meta_path = ROOT / "kernel-metadata.json"
     owner = _kaggle_username() or "YOUR_USERNAME"
@@ -412,32 +415,41 @@ def _ensure_kernel_metadata(kernel_slug: str) -> None:
                 return  # 已是真实用户名，保留
         except (OSError, json.JSONDecodeError):
             pass
-    meta = {
+    meta: dict = {
         "id": f"{owner}/{kernel_slug}",
         "title": "TennisClip CV verify",
-        "is_bookmark": False,
-        "is_private": True,
+        "code_file": "kaggle_verify.ipynb",   # 相对 kernel-metadata.json 所在目录（kaggle/ 根）
+        "language": "python",
         "kernel_type": "notebook",
-        "language": "Python",
-        "notify_colaborators": False,
-        "search_visible": True,
-        "enable_gpu": True,
-        "enable_internet": True,
-        "enable_tpu": False,
+        "is_private": "true",
+        "enable_gpu": "true",
+        "enable_internet": "true",
+        "machine_shape": "",
+        "dataset_sources": [],
+        "competition_sources": [],
+        "kernel_sources": [],
+        "model_sources": [],
     }
+    if dataset_slug and owner != "YOUR_USERNAME":
+        meta["dataset_sources"] = [f"{owner}/{dataset_slug}"]
     meta_path.write_text(json.dumps(meta, indent=2), encoding="ascii")
-    print(f"  [i] kernel-metadata.json 已生成（id={owner}/{kernel_slug}）")
+    print(f"  [i] kernel-metadata.json 已生成（id={owner}/{kernel_slug}，code_file=kaggle_verify.ipynb"
+          + (f"，dataset_sources=[{owner}/{dataset_slug}]" if dataset_slug and owner != "YOUR_USERNAME" else "") + "）")
     if owner == "YOUR_USERNAME":
         print(f"  [warn] owner 为占位——请手改 {ROOT / 'kernel-metadata.json'} 的 id 为 <你的Kaggle用户名>/{kernel_slug} 再推送")
 
 
-def push_notebook(kernel_slug: str) -> bool:
-    """kaggle kernels push -p . 把 kaggle_verify.ipynb 推成 Kaggle notebook。"""
+def push_notebook(kernel_slug: str, dataset_slug: str | None = None) -> bool:
+    """kaggle kernels push -p . 把 kaggle_verify.ipynb 推成 Kaggle notebook。
+
+    dataset_slug 提供时，kernel-metadata 的 dataset_sources 写入 `<owner>/<dataset_slug>`，
+    Kaggle 网页打开 notebook 时自动挂载该 dataset 为输入（/kaggle/input/<slug>/）。
+    """
     ipynb = ROOT / "kaggle_verify.ipynb"
     if not ipynb.is_file():
         print(f"  [FAIL] 缺 notebook 模板 {ipynb}")
         return False
-    _ensure_kernel_metadata(kernel_slug)
+    _ensure_kernel_metadata(kernel_slug, dataset_slug)
     print(f"  推送 notebook -> {kernel_slug}")
     code, out, err = sh(["kaggle", "kernels", "push", "-p", "."], cwd=ROOT, env=kaggle_env())
     if out and out.strip():
@@ -445,8 +457,8 @@ def push_notebook(kernel_slug: str) -> bool:
     if code != 0:
         combined = (out + "\n" + err).lower()
         print(f"  [FAIL] notebook 推送失败（退出码 {code}）：{(err or out).strip()[:400]}")
-        if "metadata" in combined and "not found" in combined:
-            print(f"     kernel-metadata.json 缺失：检查 {ROOT / 'kernel-metadata.json'}（本脚本已自动生成；手动推时也可新建）")
+        if "code_file" in combined or "source" in combined:
+            print(f"     kernel-metadata 缺 code_file：检查 {ROOT / 'kernel-metadata.json'}（本脚本已自动生成；手动推时须含 code_file 指向 .ipynb）")
         if "403" in combined or "forbidden" in combined:
             print("     403 Forbidden：凭据对 notebook 写接口无权限。换新版 token（kaggle auth login 或")
             print(f"     {DOTENV_NAME} 写 KAGGLE_API_TOKEN）后重推。")
@@ -564,7 +576,7 @@ def main() -> int:
 
     # 6) 推 notebook
     next_step("推送 Kaggle notebook（kaggle kernels push）")
-    if not push_notebook(args.kernel_slug):
+    if not push_notebook(args.kernel_slug, dataset_slug=args.slug):
         print("\n终止：notebook 推送失败。")
         return 1
 
