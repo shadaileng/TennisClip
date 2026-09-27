@@ -231,6 +231,15 @@ def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
     #       故 metadata 全字段必须 ASCII——中文会 UnicodeDecodeError 导致上传失败。
     DATASET.mkdir(parents=True, exist_ok=True)
     owner = _kaggle_username() or "YOUR_USERNAME"
+    # 幂等：已存在且 id 已是真实用户名（非占位）则保留，避免覆盖用户手改值
+    meta_path = DATASET / "dataset-metadata.json"
+    if meta_path.is_file():
+        try:
+            cur = json.loads(meta_path.read_text(encoding="ascii"))
+            if cur.get("id", "").split("/")[0] not in ("", "YOUR_USERNAME"):
+                owner = cur["id"].split("/")[0]
+        except (OSError, json.JSONDecodeError):
+            pass
     title = "TennisClip CV verify (code+weights+video)"   # 6-50 字符
     meta_content = {
         "id": f"{owner}/{slug}",
@@ -242,8 +251,8 @@ def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
         "keywords": ["tennis"],
     }
     (DATASET / "dataset-metadata.json").write_text(json.dumps(meta_content, indent=2), encoding="ascii")
-    print(f"  [1/4] dataset-metadata.json 已生成（id={owner}/{slug}；"
-          + ("owner 为占位 YOUR_USERNAME，请编辑 dataset/dataset-metadata.json 的 id 为 <你的Kaggle用户名>/" + slug + " 再上传" if owner == "YOUR_USERNAME" else "已从本地 kaggle 配置解出") + "）")
+    if owner == "YOUR_USERNAME":
+        print(f"  [warn] 未解出 Kaggle 用户名——请手改 {DATASET / 'dataset-metadata.json'} 的 id 为 <你的Kaggle用户名>/{slug}")
 
     # 3. 拷贝 verify.py
     shutil.copy2(verify_py, DATASET / "verify.py")
@@ -315,21 +324,18 @@ def verify_dataset_content() -> bool:
 
 
 def _kaggle_username() -> str | None:
-    """Kaggle 用户名（新版 CLI token 模式不一定能从本地配置解出；解不出时返回 None，
-    由调用方提示用户手填 dataset-metadata.json 的 id）。"""
-    try:
-        from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore
-        api = KaggleApi()
-        user = api.config_values.get("username") or api.config_values.get("user")
-        if isinstance(user, str) and user:
-            return user
-    except Exception:
-        pass
-    # 旧版 kaggle.json 兜底
+    """Kaggle 用户名：kaggle/.env 的 KAGGLE_USER_NAME > 环境变量 KAGGLE_USER_NAME >
+    ~/.kaggle/kaggle.json 的 user 字段。解不出时返回 None，由调用方占位 YOUR_USERNAME。"""
+    v = load_dotenv().get("KAGGLE_USER_NAME")
+    if v:
+        return v
+    v = os.environ.get("KAGGLE_USER_NAME")
+    if v:
+        return v
     kj = Path.home() / ".kaggle" / "kaggle.json"
     if kj.is_file():
         try:
-            return json.loads(kj.read_text(encoding="utf-8")).get("username")
+            return json.loads(kj.read_text(encoding="utf-8")).get("user")
         except (OSError, json.JSONDecodeError):
             pass
     return None
@@ -339,8 +345,10 @@ def upload_dataset(slug: str) -> bool:
     """kaggle datasets create -p .（在 kaggle/ 根下跑；CLI 认 dataset/ 内的 dataset-metadata.json）。
 
     kaggle CLI 2.x 的 -p 指向「含 dataset-metadata.json 的文件夹」，且默认 dir_mode=skip
-    只上传该文件夹根下的平铺文件（子目录不传）——build_dataset 已产出平铺布局。
-    这里 cwd=ROOT 跑 `kaggle datasets create -p dataset`。
+    只上传该文件夹根下的平铺文件（子目录不传）——build_dataset 已产出全平铺布局。
+    dataset 已存在（slug 被占/重复 create）时改走 `datasets version` 补新版本。
+    403 Forbidden 多为「kaggle/.env 的旧版 user/key 在 2.x 对写接口降级鉴权」——
+    需换新版 token（kaggle auth login / KAGGLE_API_TOKEN）。
     """
     print(f"  上传 dataset -> {slug}")
     code, out, err = sh(["kaggle", "datasets", "create", "-p", "dataset"], cwd=ROOT, env=kaggle_env())
@@ -350,14 +358,34 @@ def upload_dataset(slug: str) -> bool:
         print(err)
     if code != 0:
         combined = (out + "\n" + err).lower()
+        # dataset 已存在（slug 重复）→ 降级走 version 补新版本（不重复建 dataset）
+        if ("already exists" in combined or "slug" in combined and "taken" in combined
+                or "in use" in combined or "duplicate" in combined) and "403" not in combined:
+            print(f"  [i] dataset 已存在（slug 被占），改走 kaggle datasets version 补新版本")
+            code, out, err = sh(["kaggle", "datasets", "version", "-m", "deploy.py 补新版本", "-p", "dataset"],
+                                cwd=ROOT, env=kaggle_env())
+            if out and out.strip():
+                print(out)
+            if err and err.strip():
+                print(err)
+            combined = (out + "\n" + err).lower()
+        if code == 0:
+            print(f"  [ok] dataset 已上传 Kaggle：{slug}")
+            return True
         print(f"  [FAIL] 上传失败（退出码 {code}）")
         if "invalid folder" in combined:
             print(f"     原因：{DATASET} 目录不存在——先跑：python {ROOT / 'deploy.py'} --skip-upload 组装，再重传。")
         if "metadata" in combined:
             print(f"     metadata 问题：检查 {DATASET / 'dataset-metadata.json'}（kaggle CLI 2.x 新版 schema：")
             print(f"     id 须为 <你的用户名>/{slug}、title 6-50 字符、licenses 恰 1 项；旧 meta.json 已不读）")
-        if "authentication" in combined or "auth" in combined:
-            print("     凭据问题（kaggle CLI 2.x 需要新版 token）：")
+        if "403" in combined or "forbidden" in combined:
+            print("     403 Forbidden：凭据对写接口无权限。kaggle CLI 2.x 下旧版 KAGGLE_USER_NAME/")
+            print(f"     KAGGLE_API_KEY（kaggle/.env）已降级鉴权，需换新版 token：")
+            print("       1) 运行 kaggle auth login（浏览器授权，token 缓存到 ~/.kaggle/access_token）")
+            print(f"       2) 或编辑 {DOTENV_NAME} 写入 KAGGLE_API_TOKEN=你的token（kaggle.com → Settings → API → Generate New Token）")
+            print("       换 token 后重跑本脚本即可。")
+        elif "authentication" in combined or "auth" in combined:
+            print("     凭据缺失（kaggle CLI 2.x 需要新版 token）：")
             print("       1) 运行 kaggle auth login（浏览器授权，token 缓存到 ~/.kaggle/access_token）")
             print(f"       2) 或编辑 {DOTENV_NAME} 写入 KAGGLE_API_TOKEN=你的token 后重跑本脚本")
         print(f"     手动重传：cd {ROOT} && kaggle datasets create -p dataset")
@@ -366,12 +394,50 @@ def upload_dataset(slug: str) -> bool:
     return True
 
 
+def _ensure_kernel_metadata(kernel_slug: str) -> None:
+    """确保 kaggle/kernel-metadata.json 存在（kaggle CLI 2.x 推 notebook 必需）。
+
+    幂等：已存在且 id 前缀为真实用户名（非占位）则保留，避免覆盖用户手改值；
+    缺 id 或 id 仍为占位则用当前解析出的用户名重写。
+    全字段 ASCII（同 dataset-metadata，CLI 用系统默认编码读 JSON，中文 Windows GBK 下须避免中文）。
+    """
+    meta_path = ROOT / "kernel-metadata.json"
+    owner = _kaggle_username() or "YOUR_USERNAME"
+    if meta_path.is_file():
+        try:
+            cur = json.loads(meta_path.read_text(encoding="ascii"))
+            cur_id = cur.get("id", "")
+            cur_owner = cur_id.split("/")[0] if "/" in cur_id else ""
+            if cur_owner not in ("", "YOUR_USERNAME"):
+                return  # 已是真实用户名，保留
+        except (OSError, json.JSONDecodeError):
+            pass
+    meta = {
+        "id": f"{owner}/{kernel_slug}",
+        "title": "TennisClip CV verify",
+        "is_bookmark": False,
+        "is_private": True,
+        "kernel_type": "notebook",
+        "language": "Python",
+        "notify_colaborators": False,
+        "search_visible": True,
+        "enable_gpu": True,
+        "enable_internet": True,
+        "enable_tpu": False,
+    }
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="ascii")
+    print(f"  [i] kernel-metadata.json 已生成（id={owner}/{kernel_slug}）")
+    if owner == "YOUR_USERNAME":
+        print(f"  [warn] owner 为占位——请手改 {ROOT / 'kernel-metadata.json'} 的 id 为 <你的Kaggle用户名>/{kernel_slug} 再推送")
+
+
 def push_notebook(kernel_slug: str) -> bool:
     """kaggle kernels push -p . 把 kaggle_verify.ipynb 推成 Kaggle notebook。"""
     ipynb = ROOT / "kaggle_verify.ipynb"
     if not ipynb.is_file():
         print(f"  [FAIL] 缺 notebook 模板 {ipynb}")
         return False
+    _ensure_kernel_metadata(kernel_slug)
     print(f"  推送 notebook -> {kernel_slug}")
     code, out, err = sh(["kaggle", "kernels", "push", "-p", "."], cwd=ROOT, env=kaggle_env())
     if out and out.strip():
@@ -379,7 +445,12 @@ def push_notebook(kernel_slug: str) -> bool:
     if code != 0:
         combined = (out + "\n" + err).lower()
         print(f"  [FAIL] notebook 推送失败（退出码 {code}）：{(err or out).strip()[:400]}")
-        if "authentication" in combined or "auth" in combined:
+        if "metadata" in combined and "not found" in combined:
+            print(f"     kernel-metadata.json 缺失：检查 {ROOT / 'kernel-metadata.json'}（本脚本已自动生成；手动推时也可新建）")
+        if "403" in combined or "forbidden" in combined:
+            print("     403 Forbidden：凭据对 notebook 写接口无权限。换新版 token（kaggle auth login 或")
+            print(f"     {DOTENV_NAME} 写 KAGGLE_API_TOKEN）后重推。")
+        elif "authentication" in combined or "auth" in combined:
             print("     凭据问题：运行 kaggle auth login 或写 kaggle/.env 的 KAGGLE_API_TOKEN，再重跑。")
         return False
     print(f"  [ok] notebook 已推送")

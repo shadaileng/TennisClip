@@ -82,6 +82,8 @@ python deploy.py
 #      cd kaggle && kaggle datasets create -p dataset
 #    dataset 已存在、只补权重/文件时加新版本（不用重建）：
 #      cd kaggle && kaggle datasets version -m "add weights" -p dataset
+#    手动推 notebook（kaggle CLI 2.x 需要 kaggle/kernel-metadata.json，deploy.py 已自动生成）：
+#      cd kaggle && kaggle kernels push -p .
 
 # 3. Kaggle 侧人工（deploy.py 末尾会打印）：
 #    https://www.kaggle.com/kernels 搜 kaggle-tennisclip-verify
@@ -109,6 +111,10 @@ kaggle kernels pull {username}/kaggle-tennisclip-verify -p out/
 >   `dataset_sample.mp4`（视频）+ `tracknet.pth`（权重，可多个 `*.pth`），
 >   verify.py 开跑前自动规整为 `data/` + `weights/`；要连子目录全传需 `-r zip`/`-r tar`（会多套一层压缩包，勿用）。
 > - 缺 dataset/ 目录时 CLI 报 `Invalid folder`——先 `python deploy.py --skip-upload` 组装再传。
+> - **notebook 推送需 `kernel-metadata.json`**（kaggle CLI 2.x 的 `kernels push` 必需，缺则报
+>   `Metadata file not found: .\kernel-metadata.json`）：schema 为 `id`=`<用户名>/<slug>`、`title`、
+>   `kernel_type=notebook`、`enable_gpu`/`enable_internet` 等（全 ASCII，同 dataset-metadata）。
+>   deploy.py 的 `push_notebook()` 会自动生成/保留（幂等：已存在真实用户名则不覆盖）。
 
 ## 已知限制
 
