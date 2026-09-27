@@ -12,7 +12,7 @@
   这样验证的是「节点算法 + 图调度 + 降级契约」的正确性，而非 DB 持久化。
 - **权重/视频走 dataset**：Kaggle 上路径固定为 /kaggle/input/{slug}/，
   本脚本用 ``--input`` 指向 dataset 根。两种布局都认：
-  - 平铺（kaggle CLI 2.x 默认 dir_mode=skip 上传后的形态）：根下 *.mp4 + dataset_weights/*.pth
+  - 平铺（kaggle CLI 2.x 默认 dir_mode=skip 上传后的形态）：根下 *.mp4 + *.pth
   - 规整（本地 dry-run 习惯）：data/*.mp4 + weights/*.pth
   平铺形态开跑前由 ``normalize_input_layout`` 幂等规整为 data/ + weights/。
 
@@ -368,10 +368,8 @@ def build_cv_debug_graph() -> "WorkflowGraph":
 # ---------------------------------------------------------------------------
 
 def find_weights(input_root: Path) -> Path:
-    """在 dataset 的 weights/ 或 dataset_weights/ 下找 tracknet.pth（平铺布局兼容）。"""
-    cand = input_root / "dataset_weights"
-    if not cand.is_dir():
-        cand = input_root / "weights"
+    """在 dataset 的 weights/ 下找 tracknet.pth（normalize_input_layout 规整后）。"""
+    cand = input_root / "weights"
     pth = list(cand.glob("*.pth")) + list(cand.glob("*.pt")) if cand.is_dir() else []
     if not pth:
         raise SystemExit(f"[verify] 未找到 TrackNet 权重：{cand}/*.pth")
@@ -381,8 +379,8 @@ def find_weights(input_root: Path) -> Path:
 def normalize_input_layout(input_root: Path) -> None:
     """Kaggle dataset 平铺布局规整（kaggle CLI 2.x dir_mode=skip 上传后的形态）：
     - 根下 *.mp4（dataset_sample.mp4 等）→ data/
-    - dataset_weights/ → weights/（verify.py 约定读 weights/）
-    幂等：已规整过的目录不动；本地 dry-run 的 data/ weights/ 布局不受影响。
+    - 根下 *.pth / *.pt（tracknet.pth 等权重）→ weights/
+    幂等：已规整过的目录不动；本地 dry-run 的 data/ + weights/ 布局不受影响。
     """
     data_dir = input_root / "data"
     vids = [f for f in input_root.glob("*.mp4")]
@@ -391,15 +389,13 @@ def normalize_input_layout(input_root: Path) -> None:
         for f in vids:
             f.rename(data_dir / f.name)
         _log("verify: 根下 {} 个 mp4 → data/", len(vids))
-    dw = input_root / "dataset_weights"
-    if dw.is_dir():
-        target = input_root / "weights"
-        target.mkdir(parents=True, exist_ok=True)
-        for f in dw.iterdir():
-            if f.is_file():
-                f.rename(target / f.name)
-        dw.rmdir()
-        _log("verify: dataset_weights/ → weights/")
+    pths = [f for f in input_root.glob("*.pth")] + [f for f in input_root.glob("*.pt")]
+    if pths:
+        weights_dir = input_root / "weights"
+        weights_dir.mkdir(parents=True, exist_ok=True)
+        for f in pths:
+            f.rename(weights_dir / f.name)
+        _log("verify: 根下 {} 个权重 → weights/", len(pths))
 
 
 def find_videos(input_root: Path) -> list[Path]:

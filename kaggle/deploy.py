@@ -196,9 +196,15 @@ def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
     在 bash（Linux/macOS/Git Bash）或 Windows 原生 PowerShell 里 `python deploy.py` 行为一致。
     build_dataset.ps1 保留供习惯 PowerShell 的用户单独使用（旧 data/weights 布局）。
     """
-    # 0. 清理旧产物（只重建本次要生成的文件；用户手动放的其它 mp4 不动）
+    # 0. 清理旧产物（含上一版布局残留：dataset_weights/ 子目录、旧 meta.json）
     for old in (DATASET / "app.tar.gz", DATASET / "app.zip", DATASET / "meta.json"):
         old.unlink(missing_ok=True)
+    dw = DATASET / "dataset_weights"
+    if dw.is_dir():
+        for f in dw.iterdir():
+            if f.is_file():
+                f.unlink()
+        dw.rmdir()
 
     # 1. 校验前置
     if not (BACKEND / "app").is_dir():
@@ -233,7 +239,7 @@ def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
         "description": "TennisClip AI - tennis video highlight detection + CV verification "
                        "(16-node executor graph + TrackNet ball tracking + trajectory overlay). "
                        "Run verify.py on Kaggle GPU via kaggle_verify.ipynb.",
-        "keywords": ["computer-vision", "tennis", "ball-tracking"],
+        "keywords": ["tennis"],
     }
     (DATASET / "dataset-metadata.json").write_text(json.dumps(meta_content, indent=2), encoding="ascii")
     print(f"  [1/4] dataset-metadata.json 已生成（id={owner}/{slug}；"
@@ -253,7 +259,7 @@ def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
                 tf.add(src_dir, arcname=sub)
     print(f"  [3/4] app.tar.gz 已生成（tarfile，含 app/ + prompts/）：{tar_path}")
 
-    # 5. 视频与权重（kaggle CLI 2.x 默认 dir_mode=skip 子目录不上传，须平铺在 dataset/ 根）
+    # 5. 视频与权重（kaggle CLI 2.x 默认 dir_mode=skip 连子目录都不传，须全部平铺在 dataset/ 根）
     src_videos = BACKEND / "data" / "sample_videos"
     src_models = BACKEND / "data" / "models"
 
@@ -268,17 +274,17 @@ def build_dataset(slug: str = SLUG_DEFAULT) -> bool:
     else:
         print(f"  [warn] 未找到 {src_videos}（可手动放视频到 dataset/ 根下）")
 
-    weights_dir = DATASET / "dataset_weights"
     if src_models.is_dir():
         pths = sorted(src_models.glob("*.pth"))
         if pths:
-            weights_dir.mkdir(parents=True, exist_ok=True)
             for f in pths:
-                shutil.copy2(f, weights_dir / f.name)
-            print(f"     权重已平铺：{[f.name for f in pths]} → dataset_weights/（Kaggle 侧 verify.py 重命名回 weights/）")
+                shutil.copy2(f, DATASET / f.name)
+            print(f"     权重已平铺：{[f.name for f in pths]} → dataset/ 根下（Kaggle 侧 verify.py 开跑前规整进 weights/）")
         else:
             print("  [warn] 未找到 *.pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
             print("     要真跑推理，先 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth 放入 backend/data/models/。")
+    else:
+        print(f"  [warn] 未找到 {src_models}（权重缺失时 TrackNet 级联跳过；可手动放 *.pth 到 dataset/ 根下）")
 
     # 6. 提示
     total = sum(f.stat().st_size for f in DATASET.rglob("*") if f.is_file())
@@ -296,15 +302,15 @@ def verify_dataset_content() -> bool:
     if not (DATASET.joinpath("app.tar.gz").is_file() or DATASET.joinpath("app.zip").is_file()):
         print("  [FAIL] 缺 app.tar.gz / app.zip（app 代码包）"); ok = False
     vids = [f for f in DATASET.glob("*.mp4")]
-    pths = list(DATASET.joinpath("dataset_weights").glob("*.pth")) if DATASET.joinpath("dataset_weights").is_dir() else []
+    pths = [f for f in DATASET.glob("*.pth")]
     if not vids:
         print("  [warn] dataset/ 根下无 mp4 视频——Kaggle 跑起来会因「无视频」退出。")
         print("     先放 1-5 分钟网球视频到 kaggle/dataset/ 根下（文件名避开 dataset_sample.mp4 可多放）再重跑")
     if not pths:
-        print("  [warn] dataset_weights/ 下无 .pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
+        print("  [warn] dataset/ 根下无 .pth 权重——Kaggle 上 TrackNet 会 CvUnavailable 级联跳过（验证链路仍通）。")
         print("     要真跑推理，先 backend/scripts/fetch_tracknet_weights.py 生成 tracknet.pth 放入 backend/data/models/。")
     if ok:
-        print(f"  [ok] dataset 内容就绪（平铺布局：视频 {len(vids)} 个 / 权重 {len(pths)} 个，kaggle CLI 2.x dir_mode=skip 可全量上传）")
+        print(f"  [ok] dataset 内容就绪（平铺布局：视频 {len(vids)} 个 / 权重 {len(pths)} 个，全部在 dataset/ 根下，dir_mode=skip 全量上传）")
     return ok
 
 

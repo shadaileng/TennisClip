@@ -64,9 +64,9 @@ pip install kaggle
 #   （旧版 KAGGLE_USER_NAME + KAGGLE_API_KEY + ~/.kaggle/kaggle.json 已逐步弃用，CLI 2.x 默认不再读取）
 
 # 1. 本地准备（可选）：预填视频/权重（不预填 deploy.py 自动从 backend/data/ 拷）
-#    平铺布局（kaggle CLI 2.x 默认 dir_mode=skip 子目录不上传，deploy.py 按此产出）：
+#    平铺布局（kaggle CLI 2.x 默认 dir_mode=skip 连子目录都不上传，deploy.py 按此产出）：
 #      kaggle/dataset/dataset_sample.mp4   # 视频（多视频放根下，文件名避开 dataset_sample.mp4）
-#      kaggle/dataset/dataset_weights/tracknet.pth
+#      kaggle/dataset/tracknet.pth        # 权重（根下平铺，可多个 *.pth）
 #    若权重缺失，本地先跑 backend/scripts/fetch_tracknet_weights.py 生成
 
 # 2. 一键部署（纯 Python 组装 + 上传 dataset + 推 notebook，全自动，无 shell 依赖）
@@ -75,11 +75,13 @@ python deploy.py
 #      写 dataset/dataset-metadata.json（kaggle CLI 2.x 新版 schema，全字段 ASCII：
 #      id=YOUR_USERNAME/kaggle-tennisclip-verify 占位，上传前改成 <你的Kaggle用户名>/<slug>）
 #      → 拷 verify.py → tarfile 打 backend/{app,prompts} 为 app.tar.gz
-#      → 平铺视频/权重 → kaggle datasets create -p dataset（在 kaggle/ 根下跑）
+#      → 平铺视频/权重到 dataset/ 根下 → kaggle datasets create -p dataset（在 kaggle/ 根下跑）
 #      → kaggle kernels push -p .
 #    只组装本地不上传：python deploy.py --skip-upload --allow-missing-cli
 #    手动上传（配好凭据 + dataset-metadata.json 的 id 为 <你的Kaggle用户名>/<slug> 后）：
 #      cd kaggle && kaggle datasets create -p dataset
+#    dataset 已存在、只补权重/文件时加新版本（不用重建）：
+#      cd kaggle && kaggle datasets version -m "add weights" -p dataset
 
 # 3. Kaggle 侧人工（deploy.py 末尾会打印）：
 #    https://www.kaggle.com/kernels 搜 kaggle-tennisclip-verify
@@ -102,9 +104,10 @@ kaggle kernels pull {username}/kaggle-tennisclip-verify -p out/
 > - `datasets create -p <folder>` 只认 `dataset-metadata.json`（新版 schema：`id`=`<用户名>/<slug>`、
 >   `title` 6–50 字符、`licenses` 恰 1 项）；旧版 `meta.json` 的 `dataset_name`/`license` 字段已不读。
 >   **metadata 全字段必须 ASCII**——CLI 用系统默认编码读 JSON（中文 Windows=GBK），中文会解码崩溃。
-> - 默认 `dir_mode=skip`：**folder 根下的平铺文件**才上传，子目录不传。故 dataset 布局为
->   `dataset_sample.mp4`（根下）+ `dataset_weights/tracknet.pth`（唯一子目录，
->   verify.py 开跑前自动规整为 `weights/`）；要连子目录全传需 `-r zip`/`-r tar`（会多套一层压缩包，勿用）。
+> - 默认 `dir_mode=skip`：**folder 根下的平铺文件**才上传，子目录不传（CLI 会打印
+>   `Skipping folder: xxx` 提示）。故 dataset 全部产物平铺在根下：
+>   `dataset_sample.mp4`（视频）+ `tracknet.pth`（权重，可多个 `*.pth`），
+>   verify.py 开跑前自动规整为 `data/` + `weights/`；要连子目录全传需 `-r zip`/`-r tar`（会多套一层压缩包，勿用）。
 > - 缺 dataset/ 目录时 CLI 报 `Invalid folder`——先 `python deploy.py --skip-upload` 组装再传。
 
 ## 已知限制
