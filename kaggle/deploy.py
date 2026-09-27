@@ -48,7 +48,7 @@ ROOT = Path(__file__).resolve().parent          # kaggle/
 BACKEND = ROOT.parent / "backend"
 DATASET = ROOT / "dataset"
 SLUG_DEFAULT = "kaggle-tennisclip-verify"
-KERNEL_SLUG_DEFAULT = "kaggle-tennisclip-verify"   # notebook slug
+KERNEL_SLUG_DEFAULT = "tennisclip-cv-verify"   # notebook slug = title「TennisClip CV verify」的 clean slug（Kaggle 校验 id 后缀 == title slug，否则 409）
 DOTENV_FILE = ROOT / ".env"                          # kaggle/.env（KAGGLE_USER_NAME / KAGGLE_API_KEY，.gitignore 忽略）
 DOTENV_NAME = "kaggle/.env"
 
