@@ -403,6 +403,9 @@ def _ensure_kernel_metadata(kernel_slug: str, dataset_slug: str | None = None) -
       `dataset_sources`（`<用户名>/<dataset-slug>`，让 notebook 自动挂载输入）等
     全字段 ASCII（同 dataset-metadata，CLI 用系统默认编码读 JSON，中文 Windows GBK 下须避免中文）。
     幂等：已存在且 id 前缀为真实用户名（非占位）则保留，避免覆盖用户手改值。
+
+    注意：kaggle CLI 校验 title 转 slug 须与 id 后缀一致，否则告警（非阻断，但 URL 会不一致）。
+    故 title 写成 title 式（空格分隔），kernel_slug 写成 title 式 slug（小写连字符），两者对齐。
     """
     meta_path = ROOT / "kernel-metadata.json"
     owner = _kaggle_username() or "YOUR_USERNAME"
@@ -415,9 +418,12 @@ def _ensure_kernel_metadata(kernel_slug: str, dataset_slug: str | None = None) -
                 return  # 已是真实用户名，保留
         except (OSError, json.JSONDecodeError):
             pass
+    # title 与 kernel_slug 对齐：kernel_slug 是 title 的小写连字符 slug（Kaggle 实际 URL 用 title 生成）
+    # 例：kernel_slug="tennisclip-cv-verify" → title="Tennisclip Cv Verify"（title 式）
+    title = " ".join(w.capitalize() for w in kernel_slug.replace("-", " ").split())
     meta: dict = {
         "id": f"{owner}/{kernel_slug}",
-        "title": "TennisClip CV verify",
+        "title": title,
         "code_file": "kaggle_verify.ipynb",   # 相对 kernel-metadata.json 所在目录（kaggle/ 根）
         "language": "python",
         "kernel_type": "notebook",
@@ -433,7 +439,7 @@ def _ensure_kernel_metadata(kernel_slug: str, dataset_slug: str | None = None) -
     if dataset_slug and owner != "YOUR_USERNAME":
         meta["dataset_sources"] = [f"{owner}/{dataset_slug}"]
     meta_path.write_text(json.dumps(meta, indent=2), encoding="ascii")
-    print(f"  [i] kernel-metadata.json 已生成（id={owner}/{kernel_slug}，code_file=kaggle_verify.ipynb"
+    print(f"  [i] kernel-metadata.json 已生成（id={owner}/{kernel_slug}，title={title}，code_file=kaggle_verify.ipynb"
           + (f"，dataset_sources=[{owner}/{dataset_slug}]" if dataset_slug and owner != "YOUR_USERNAME" else "") + "）")
     if owner == "YOUR_USERNAME":
         print(f"  [warn] owner 为占位——请手改 {ROOT / 'kernel-metadata.json'} 的 id 为 <你的Kaggle用户名>/{kernel_slug} 再推送")
